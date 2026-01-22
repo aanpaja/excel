@@ -493,14 +493,97 @@ def get_locations_list():
         locations = get_all_locations_from_monthly_sheets(
             EXCEL_FILE_PATH
         )
-        
+
         return jsonify({
             'success': True,
             'data': {
                 'locations': locations
             }
         })
-    
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)})
+
+@app.route('/api/month-detail', methods=['POST'])
+def get_month_detail():
+    """Get detailed data for a specific month including tickets, avg times, and location breakdown"""
+    try:
+        data = request.json
+        month = data.get('month', '').upper()
+
+        if not month:
+            return jsonify({'success': False, 'message': 'Bulan tidak boleh kosong'})
+
+        # Valid months
+        valid_months = ['JANUARI', 'FEBRUARI', 'MARET', 'APRIL', 'MEI', 'JUNI',
+                       'JULI', 'AGUSTUS', 'SEPTEMBER', 'OKTOBER', 'NOVEMBER', 'DESEMBER']
+
+        if month not in valid_months:
+            return jsonify({'success': False, 'message': f'Bulan tidak valid: {month}'})
+
+        # Read the monthly sheet
+        df = pd.read_excel(EXCEL_FILE_PATH, sheet_name=month, header=0)
+
+        # Total tickets
+        total_tickets = len(df)
+
+        # Get unique locations
+        locations = []
+        if 'Lokasi Pelanggan' in df.columns:
+            locations = df['Lokasi Pelanggan'].dropna().unique().tolist()
+            locations = [loc for loc in locations if loc and str(loc).strip()]
+
+        total_locations = len(locations)
+
+        # Calculate average response time
+        avg_respon_minutes = 0
+        if 'Durasi Respon' in df.columns:
+            respon_values = df['Durasi Respon'].dropna()
+            if len(respon_values) > 0:
+                total_respon = sum([parse_duration_to_minutes(v) for v in respon_values])
+                avg_respon_minutes = total_respon / len(respon_values)
+
+        # Calculate average handling time
+        avg_penanganan_minutes = 0
+        if 'Durasi Penanganan Gangguan' in df.columns:
+            penanganan_values = df['Durasi Penanganan Gangguan'].dropna()
+            if len(penanganan_values) > 0:
+                total_penanganan = sum([parse_duration_to_minutes(v) for v in penanganan_values])
+                avg_penanganan_minutes = total_penanganan / len(penanganan_values)
+
+        # Calculate average per location
+        location_data = []
+        if 'Lokasi Pelanggan' in df.columns and 'Durasi Penanganan Gangguan' in df.columns:
+            for loc in locations:
+                loc_df = df[df['Lokasi Pelanggan'] == loc]
+                loc_penanganan = loc_df['Durasi Penanganan Gangguan'].dropna()
+
+                if len(loc_penanganan) > 0:
+                    total = sum([parse_duration_to_minutes(v) for v in loc_penanganan])
+                    avg = total / len(loc_penanganan)
+                    location_data.append({
+                        'location': loc,
+                        'avg_minutes': round(avg, 2),
+                        'ticket_count': len(loc_df)
+                    })
+
+        # Sort by avg_minutes descending
+        location_data = sorted(location_data, key=lambda x: x['avg_minutes'], reverse=True)
+
+        return jsonify({
+            'success': True,
+            'data': {
+                'month': month,
+                'total_tickets': total_tickets,
+                'avg_respon_minutes': round(avg_respon_minutes, 2),
+                'avg_penanganan_minutes': round(avg_penanganan_minutes, 2),
+                'total_locations': total_locations,
+                'location_breakdown': location_data
+            }
+        })
+
     except Exception as e:
         import traceback
         traceback.print_exc()
