@@ -130,6 +130,8 @@ def extract_spreadsheet_id(url):
     
     return url
 
+EXCEL_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'LAPORAN HARIAN HELPDESK 2025 BARU.xlsx')
+
 def read_local_excel(file_path):
     try:
         df = pd.read_excel(file_path, sheet_name='AVG', header=None)
@@ -412,8 +414,8 @@ def get_data():
                 except:
                     pass
         else:
-            df = read_local_excel('/mnt/user-data/uploads/LAPORAN_HARIAN_HELPDESK_2025_BARU.xlsx')
-            location_data = read_location_data('/mnt/user-data/uploads/LAPORAN_HARIAN_HELPDESK_2025_BARU.xlsx')
+            df = read_local_excel(EXCEL_FILE_PATH)
+            location_data = read_location_data(EXCEL_FILE_PATH)
         
         if df is None:
             return jsonify({'success': False, 'message': 'Gagal membaca data. Pastikan spreadsheet sudah di-share sebagai "Anyone with the link"'})
@@ -468,7 +470,7 @@ def get_location_monthly():
             return jsonify({'success': False, 'message': 'Lokasi tidak boleh kosong'})
         
         monthly_data = read_monthly_data_per_location(
-            '/mnt/user-data/uploads/LAPORAN_HARIAN_HELPDESK_2025_BARU.xlsx',
+            EXCEL_FILE_PATH,
             location
         )
         
@@ -489,7 +491,7 @@ def get_location_monthly():
 def get_locations_list():
     try:
         locations = get_all_locations_from_monthly_sheets(
-            '/mnt/user-data/uploads/LAPORAN_HARIAN_HELPDESK_2025_BARU.xlsx'
+            EXCEL_FILE_PATH
         )
         
         return jsonify({
