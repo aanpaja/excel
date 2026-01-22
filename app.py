@@ -1,32 +1,69 @@
 from flask import Flask, render_template, jsonify, request
 import pandas as pd
 import numpy as np
-from datetime import timedelta
+from datetime import datetime, timedelta
 import re
 import os
+import urllib.request
+import urllib.parse
+from io import StringIO
+import csv
 
 app = Flask(__name__)
 
+# Default spreadsheet URL - bisa diganti sesuai kebutuhan
+DEFAULT_SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1HiQX-jn2pNfMO2-ZkBwaMbcolyKFFNb0/edit"
+
+# Daftar bulan dalam bahasa Indonesia
+MONTHS = ['JANUARI', 'FEBRUARI', 'MARET', 'APRIL', 'MEI', 'JUNI',
+          'JULI', 'AGUSTUS', 'SEPTEMBER', 'OKTOBER', 'NOVEMBER', 'DESEMBER']
+
+# Mapping nama kolom yang mungkin digunakan
+COLUMN_MAPPINGS = {
+    'durasi_respon': [
+        'Durasi Respon', 'DURASI RESPON', 'durasi respon',
+        'Durasi_Respon', 'Response Time', 'response_time',
+        'Waktu Respon', 'WAKTU RESPON'
+    ],
+    'durasi_penanganan': [
+        'Durasi Penanganan Gangguan', 'DURASI PENANGANAN GANGGUAN',
+        'durasi penanganan gangguan', 'Durasi_Penanganan',
+        'Durasi Penanganan', 'DURASI PENANGANAN',
+        'Handling Time', 'handling_time', 'Waktu Penanganan'
+    ],
+    'lokasi': [
+        'Lokasi Pelanggan', 'LOKASI PELANGGAN', 'lokasi pelanggan',
+        'Lokasi', 'LOKASI', 'Location', 'location'
+    ]
+}
+
+
 def parse_duration_to_minutes(duration_str):
+    """Parse berbagai format durasi ke menit"""
     if pd.isna(duration_str):
         return 0
-    
+
     if isinstance(duration_str, (int, float)):
         return float(duration_str)
-    
+
     if isinstance(duration_str, timedelta):
         return duration_str.total_seconds() / 60
-    
+
     duration_str = str(duration_str).strip()
-    
+
+    # Skip jika error atau kosong
+    if not duration_str or duration_str in ['#DIV/0!', '#N/A', '#VALUE!', 'NaT', 'nan']:
+        return 0
+
     try:
+        # Format: "X days, HH:MM:SS" atau "HH:MM:SS"
         parts = duration_str.split(',')
         total_minutes = 0
-        
+
         for part in parts:
             part = part.strip()
-            
-            if 'day' in part:
+
+            if 'day' in part.lower():
                 days = int(re.search(r'(\d+)', part).group(1))
                 total_minutes += days * 24 * 60
             elif ':' in part:
@@ -36,179 +73,216 @@ def parse_duration_to_minutes(duration_str):
                     minutes = int(time_parts[1])
                     seconds = float(time_parts[2])
                     total_minutes += hours * 60 + minutes + seconds / 60
-        
+                elif len(time_parts) == 2:
+                    hours = int(time_parts[0])
+                    minutes = int(time_parts[1])
+                    total_minutes += hours * 60 + minutes
+
         return round(total_minutes, 2)
     except:
         return 0
 
-def get_spreadsheet_data(spreadsheet_url):
-    try:
-        if 'docs.google.com/spreadsheets' not in spreadsheet_url:
-            return None
-        
-        sheet_id = spreadsheet_url.split('/d/')[1].split('/')[0]
-        
-        gid = None
-        if 'gid=' in spreadsheet_url:
-            gid = spreadsheet_url.split('gid=')[1].split('#')[0].split('&')[0]
-        
-        sheet_name = 'AVG'
-        
-        if gid:
-            csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
-        else:
-            import urllib.parse
-            encoded_sheet = urllib.parse.quote(sheet_name)
-            csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&sheet={encoded_sheet}"
-        
-        print(f"Downloading from Google Sheets...")
-        print(f"Sheet ID: {sheet_id}")
-        
-        try:
-            import urllib.request
-            response = urllib.request.urlopen(csv_url)
-            csv_data = response.read().decode('utf-8')
-            print("Download berhasil!")
-        except Exception as e:
-            if '403' in str(e):
-                print("ERROR 403: Spreadsheet PRIVATE!")
-                print("Solusi: Share spreadsheet ke 'Anyone with the link' (view access)")
-            else:
-                print(f"Error: {e}")
-            return None
-        
-        from io import StringIO
-        import csv
-        
-        lines = csv_data.split('\n')
-        reader = csv.reader(lines)
-        
-        data_list = []
-        for idx, row in enumerate(reader):
-            if idx < 2:
-                continue
-            
-            if len(row) < 4:
-                continue
-            
-            bulan = row[1] if len(row) > 1 else ''
-            respon = row[2] if len(row) > 2 else ''
-            penanganan = row[3] if len(row) > 3 else ''
-            
-            if bulan and bulan.strip() and not bulan.startswith('TOTAL'):
-                bulan_str = str(bulan).upper().strip()
-                if '#DIV/0!' not in str(respon) and '#DIV/0!' not in str(penanganan):
-                    data_list.append({
-                        'BULAN': bulan_str,
-                        'AVG_DURASI_RESPON': respon,
-                        'AVG_PENANGANAN_GANGGUAN': penanganan
-                    })
-        
-        df = pd.DataFrame(data_list)
-        
-        df['avg_respon_minutes'] = df['AVG_DURASI_RESPON'].apply(parse_duration_to_minutes)
-        df['avg_penanganan_minutes'] = df['AVG_PENANGANAN_GANGGUAN'].apply(parse_duration_to_minutes)
-        
-        return df
-    except Exception as e:
-        print(f"Error: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
+
+def find_column(df, column_type):
+    """Cari nama kolom yang sesuai dari mapping"""
+    possible_names = COLUMN_MAPPINGS.get(column_type, [])
+    for name in possible_names:
+        if name in df.columns:
+            return name
+    return None
+
 
 def extract_spreadsheet_id(url):
+    """Extract spreadsheet ID dari URL"""
     patterns = [
         r'/spreadsheets/d/([a-zA-Z0-9-_]+)',
         r'key=([a-zA-Z0-9-_]+)',
         r'^([a-zA-Z0-9-_]+)$'
     ]
-    
+
     for pattern in patterns:
         match = re.search(pattern, url)
         if match:
             return match.group(1)
-    
+
     return url
 
-def read_local_excel(file_path):
+
+def download_sheet_as_csv(sheet_id, sheet_name):
+    """Download sheet tertentu sebagai CSV"""
     try:
-        df = pd.read_excel(file_path, sheet_name='AVG', header=None)
-        
-        data_list = []
-        for i in range(2, min(20, df.shape[0])):
-            bulan = df.iloc[i, 1] if pd.notna(df.iloc[i, 1]) else df.iloc[i, 0]
-            respon = df.iloc[i, 2]
-            penanganan = df.iloc[i, 3]
-            
-            if pd.notna(bulan) and bulan != '' and not str(bulan).startswith('TOTAL'):
-                bulan_str = str(bulan).upper().strip()
-                if '#DIV/0!' not in str(respon) and '#DIV/0!' not in str(penanganan):
-                    data_list.append({
-                        'BULAN': bulan_str,
-                        'AVG_DURASI_RESPON': respon,
-                        'AVG_PENANGANAN_GANGGUAN': penanganan
-                    })
-        
-        df = pd.DataFrame(data_list)
-        
-        df['avg_respon_minutes'] = df['AVG_DURASI_RESPON'].apply(parse_duration_to_minutes)
-        df['avg_penanganan_minutes'] = df['AVG_PENANGANAN_GANGGUAN'].apply(parse_duration_to_minutes)
-        
-        return df
+        encoded_sheet = urllib.parse.quote(sheet_name)
+        csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&sheet={encoded_sheet}"
+
+        response = urllib.request.urlopen(csv_url, timeout=30)
+        csv_data = response.read().decode('utf-8')
+        return csv_data
     except Exception as e:
-        print(f"Error reading Excel: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"Error downloading sheet {sheet_name}: {e}")
         return None
 
-def read_location_data(file_path):
+
+def parse_csv_to_dataframe(csv_data):
+    """Parse CSV data ke DataFrame"""
     try:
-        df = pd.read_excel(file_path, sheet_name='AVG', header=None)
-        
-        locations = []
-        for i in range(2, df.shape[1]):
-            val = df.iloc[21, i]
-            if pd.notna(val) and str(val) not in ['NO', 'BULAN', 'TOTAL AVG 1 TAHUN']:
-                locations.append({'col_idx': i, 'name': str(val)})
-        
-        location_data = []
-        for loc in locations:
-            col_idx = loc['col_idx']
-            loc_name = loc['name']
-            
-            monthly_values = []
-            for row_idx in range(22, min(34, df.shape[0])):
-                bulan = df.iloc[row_idx, 1]
-                value = df.iloc[row_idx, col_idx]
-                
-                if pd.notna(bulan) and pd.notna(value) and '#DIV/0!' not in str(value):
-                    bulan_str = str(bulan).upper().strip()
-                    value_minutes = parse_duration_to_minutes(value)
-                    monthly_values.append({
-                        'bulan': bulan_str,
-                        'value_minutes': value_minutes
+        df = pd.read_csv(StringIO(csv_data))
+        return df
+    except:
+        return None
+
+
+def calculate_monthly_averages_from_raw(spreadsheet_url):
+    """
+    FUNGSI UTAMA: Menghitung average dari data mentah di setiap sheet bulanan
+    """
+    if 'docs.google.com/spreadsheets' not in spreadsheet_url:
+        return None, None, []
+
+    sheet_id = extract_spreadsheet_id(spreadsheet_url)
+    print(f"Sheet ID: {sheet_id}")
+    print("Menghitung average dari data mentah...")
+
+    monthly_results = []
+    all_location_data = {}
+    total_records = 0
+
+    for month in MONTHS:
+        print(f"  Memproses sheet: {month}...")
+
+        csv_data = download_sheet_as_csv(sheet_id, month)
+
+        if csv_data is None:
+            print(f"    - Sheet {month} tidak ditemukan atau tidak bisa diakses")
+            monthly_results.append({
+                'bulan': month,
+                'avg_respon_minutes': 0,
+                'avg_penanganan_minutes': 0,
+                'total_tiket': 0,
+                'status': 'not_found'
+            })
+            continue
+
+        df = parse_csv_to_dataframe(csv_data)
+
+        if df is None or df.empty:
+            print(f"    - Sheet {month} kosong")
+            monthly_results.append({
+                'bulan': month,
+                'avg_respon_minutes': 0,
+                'avg_penanganan_minutes': 0,
+                'total_tiket': 0,
+                'status': 'empty'
+            })
+            continue
+
+        # Cari kolom yang sesuai
+        col_respon = find_column(df, 'durasi_respon')
+        col_penanganan = find_column(df, 'durasi_penanganan')
+        col_lokasi = find_column(df, 'lokasi')
+
+        print(f"    - Kolom ditemukan: Respon={col_respon}, Penanganan={col_penanganan}, Lokasi={col_lokasi}")
+
+        # Hitung average durasi respon
+        avg_respon = 0
+        if col_respon:
+            respon_values = df[col_respon].dropna().apply(parse_duration_to_minutes)
+            respon_values = respon_values[respon_values > 0]
+            if len(respon_values) > 0:
+                avg_respon = respon_values.mean()
+
+        # Hitung average durasi penanganan
+        avg_penanganan = 0
+        if col_penanganan:
+            penanganan_values = df[col_penanganan].dropna().apply(parse_duration_to_minutes)
+            penanganan_values = penanganan_values[penanganan_values > 0]
+            if len(penanganan_values) > 0:
+                avg_penanganan = penanganan_values.mean()
+
+        total_tiket = len(df)
+        total_records += total_tiket
+
+        print(f"    - Total tiket: {total_tiket}, Avg Respon: {avg_respon:.2f} min, Avg Penanganan: {avg_penanganan:.2f} min")
+
+        monthly_results.append({
+            'bulan': month,
+            'avg_respon_minutes': round(avg_respon, 2),
+            'avg_penanganan_minutes': round(avg_penanganan, 2),
+            'total_tiket': total_tiket,
+            'status': 'ok'
+        })
+
+        # Hitung per lokasi
+        if col_lokasi and col_penanganan:
+            for lokasi in df[col_lokasi].dropna().unique():
+                if not lokasi or lokasi in ['GMEDIA', 'nan', '']:
+                    continue
+
+                lokasi_df = df[df[col_lokasi] == lokasi]
+                penanganan_vals = lokasi_df[col_penanganan].dropna().apply(parse_duration_to_minutes)
+                penanganan_vals = penanganan_vals[penanganan_vals > 0]
+
+                if len(penanganan_vals) > 0:
+                    if lokasi not in all_location_data:
+                        all_location_data[lokasi] = {
+                            'monthly_data': [],
+                            'all_values': []
+                        }
+
+                    avg_lokasi = penanganan_vals.mean()
+                    all_location_data[lokasi]['monthly_data'].append({
+                        'bulan': month,
+                        'value_minutes': round(avg_lokasi, 2),
+                        'count': len(penanganan_vals)
                     })
-            
-            if monthly_values:
-                avg_value = sum([m['value_minutes'] for m in monthly_values]) / len(monthly_values)
-                category = get_location_category(loc_name)
-                location_data.append({
-                    'location': loc_name,
-                    'category': category,
-                    'avg_minutes': avg_value,
-                    'monthly_data': monthly_values
-                })
-        
-        return sorted(location_data, key=lambda x: (get_category_order(x['category']), x['location']))
-    except Exception as e:
-        print(f"Error reading location data: {e}")
-        import traceback
-        traceback.print_exc()
-        return []
+                    all_location_data[lokasi]['all_values'].extend(penanganan_vals.tolist())
+
+    # Proses location data
+    location_results = []
+    for lokasi, data in all_location_data.items():
+        if data['all_values']:
+            avg_total = sum(data['all_values']) / len(data['all_values'])
+            category = get_location_category(lokasi)
+            location_results.append({
+                'location': lokasi,
+                'category': category,
+                'avg_minutes': round(avg_total, 2),
+                'monthly_data': data['monthly_data'],
+                'total_records': len(data['all_values'])
+            })
+
+    # Sort by category and name
+    location_results = sorted(location_results, key=lambda x: (get_category_order(x['category']), x['location']))
+
+    # Hitung quarterly (triwulan)
+    quarterly_results = []
+    quarters = [
+        ('TRIWULAN 1', ['JANUARI', 'FEBRUARI', 'MARET']),
+        ('TRIWULAN 2', ['APRIL', 'MEI', 'JUNI']),
+        ('TRIWULAN 3', ['JULI', 'AGUSTUS', 'SEPTEMBER']),
+        ('TRIWULAN 4', ['OKTOBER', 'NOVEMBER', 'DESEMBER'])
+    ]
+
+    for quarter_name, quarter_months in quarters:
+        quarter_data = [m for m in monthly_results if m['bulan'] in quarter_months and m['status'] == 'ok']
+        if quarter_data:
+            avg_respon_q = sum(m['avg_respon_minutes'] for m in quarter_data) / len(quarter_data)
+            avg_penanganan_q = sum(m['avg_penanganan_minutes'] for m in quarter_data) / len(quarter_data)
+            quarterly_results.append({
+                'period': quarter_name,
+                'avg_respon_minutes': round(avg_respon_q, 2),
+                'avg_penanganan_minutes': round(avg_penanganan_q, 2)
+            })
+
+    print(f"\nTotal records diproses: {total_records}")
+    print(f"Total lokasi ditemukan: {len(location_results)}")
+
+    return monthly_results, quarterly_results, location_results
+
 
 def get_location_category(location_name):
-    location_lower = location_name.lower()
-    
+    """Kategorikan lokasi berdasarkan nama"""
+    location_lower = str(location_name).lower()
+
     if 'corporate' in location_lower:
         return 'Corporate'
     elif 'retail' in location_lower:
@@ -224,7 +298,9 @@ def get_location_category(location_name):
     else:
         return 'Lainnya'
 
+
 def get_category_order(category):
+    """Urutan kategori untuk sorting"""
     order = {
         'Corporate': 1,
         'Retail': 2,
@@ -236,242 +312,203 @@ def get_category_order(category):
     }
     return order.get(category, 99)
 
-def read_monthly_data_per_location(file_path, location_name):
-    months = ['JANUARI', 'FEBRUARI', 'MARET', 'APRIL', 'MEI', 'JUNI', 
-              'JULI', 'AGUSTUS', 'SEPTEMBER', 'OKTOBER', 'NOVEMBER', 'DESEMBER']
-    
-    monthly_averages = []
-    
-    for month in months:
-        try:
-            df = pd.read_excel(file_path, sheet_name=month, header=0)
-            
-            if 'Lokasi Pelanggan' not in df.columns or 'Durasi Penanganan Gangguan' not in df.columns:
-                monthly_averages.append({
-                    'bulan': month,
-                    'avg_minutes': 0,
-                    'count': 0
-                })
-                continue
-            
-            location_data = df[df['Lokasi Pelanggan'] == location_name]
-            
-            if len(location_data) == 0:
-                monthly_averages.append({
-                    'bulan': month,
-                    'avg_minutes': 0,
-                    'count': 0
-                })
-                continue
-            
-            durations = location_data['Durasi Penanganan Gangguan'].dropna()
-            
-            if len(durations) == 0:
-                monthly_averages.append({
-                    'bulan': month,
-                    'avg_minutes': 0,
-                    'count': 0
-                })
-                continue
-            
-            total_minutes = 0
-            for duration in durations:
-                minutes = parse_duration_to_minutes(duration)
-                total_minutes += minutes
-            
-            avg_minutes = total_minutes / len(durations)
-            
-            monthly_averages.append({
-                'bulan': month,
-                'avg_minutes': avg_minutes,
-                'count': len(durations)
-            })
-            
-        except Exception as e:
-            print(f"Error reading {month} for {location_name}: {e}")
-            monthly_averages.append({
+
+def get_all_locations_from_spreadsheet(spreadsheet_url):
+    """Ambil semua lokasi unik dari sheet JANUARI"""
+    if 'docs.google.com/spreadsheets' not in spreadsheet_url:
+        return []
+
+    sheet_id = extract_spreadsheet_id(spreadsheet_url)
+    csv_data = download_sheet_as_csv(sheet_id, 'JANUARI')
+
+    if csv_data is None:
+        return []
+
+    df = parse_csv_to_dataframe(csv_data)
+    if df is None:
+        return []
+
+    col_lokasi = find_column(df, 'lokasi')
+    if not col_lokasi:
+        return []
+
+    locations = df[col_lokasi].dropna().unique().tolist()
+    valid_locations = [loc for loc in locations if loc not in ['GMEDIA', 'nan', '', None]]
+
+    return sorted(valid_locations)
+
+
+def calculate_location_monthly_from_raw(spreadsheet_url, location_name):
+    """Hitung data bulanan untuk lokasi tertentu dari data mentah"""
+    if 'docs.google.com/spreadsheets' not in spreadsheet_url:
+        return []
+
+    sheet_id = extract_spreadsheet_id(spreadsheet_url)
+    monthly_results = []
+
+    for month in MONTHS:
+        csv_data = download_sheet_as_csv(sheet_id, month)
+
+        if csv_data is None:
+            monthly_results.append({
                 'bulan': month,
                 'avg_minutes': 0,
                 'count': 0
             })
-    
-    return monthly_averages
+            continue
 
-def get_all_locations_from_monthly_sheets(file_path):
-    try:
-        df = pd.read_excel(file_path, sheet_name='JANUARI', header=0)
-        
-        if 'Lokasi Pelanggan' not in df.columns:
-            return []
-        
-        locations = df['Lokasi Pelanggan'].dropna().unique().tolist()
-        
-        valid_locations = [loc for loc in locations if loc not in ['GMEDIA', 'nan', '']]
-        
-        return sorted(valid_locations)
-    except Exception as e:
-        print(f"Error getting locations: {e}")
-        return []
+        df = parse_csv_to_dataframe(csv_data)
+        if df is None or df.empty:
+            monthly_results.append({
+                'bulan': month,
+                'avg_minutes': 0,
+                'count': 0
+            })
+            continue
 
-def read_location_data_from_csv(csv_data):
-    try:
-        from io import StringIO
-        import csv
-        
-        lines = csv_data.split('\n')
-        reader = csv.reader(lines)
-        
-        rows = list(reader)
-        
-        if len(rows) < 22:
-            return []
-        
-        header_row = rows[21]
-        locations = []
-        for col_idx, val in enumerate(header_row):
-            if col_idx >= 2 and val and val not in ['NO', 'BULAN', 'TOTAL AVG 1 TAHUN']:
-                locations.append({'col_idx': col_idx, 'name': val})
-        
-        location_data = []
-        for loc in locations:
-            col_idx = loc['col_idx']
-            loc_name = loc['name']
-            
-            monthly_values = []
-            for row_idx in range(22, min(34, len(rows))):
-                if row_idx >= len(rows):
-                    break
-                
-                row = rows[row_idx]
-                if len(row) <= col_idx or len(row) <= 1:
-                    continue
-                
-                bulan = row[1] if len(row) > 1 else ''
-                value = row[col_idx] if len(row) > col_idx else ''
-                
-                if bulan and value and '#DIV/0!' not in str(value):
-                    bulan_str = str(bulan).upper().strip()
-                    value_minutes = parse_duration_to_minutes(value)
-                    if value_minutes > 0:
-                        monthly_values.append({
-                            'bulan': bulan_str,
-                            'value_minutes': value_minutes
-                        })
-            
-            if monthly_values:
-                avg_value = sum([m['value_minutes'] for m in monthly_values]) / len(monthly_values)
-                category = get_location_category(loc_name)
-                location_data.append({
-                    'location': loc_name,
-                    'category': category,
-                    'avg_minutes': avg_value,
-                    'monthly_data': monthly_values
-                })
-        
-        return sorted(location_data, key=lambda x: (get_category_order(x['category']), x['location']))
-    except Exception as e:
-        print(f"Error reading location data from CSV: {e}")
-        import traceback
-        traceback.print_exc()
-        return []
+        col_lokasi = find_column(df, 'lokasi')
+        col_penanganan = find_column(df, 'durasi_penanganan')
+
+        if not col_lokasi or not col_penanganan:
+            monthly_results.append({
+                'bulan': month,
+                'avg_minutes': 0,
+                'count': 0
+            })
+            continue
+
+        # Filter by location
+        location_df = df[df[col_lokasi] == location_name]
+
+        if len(location_df) == 0:
+            monthly_results.append({
+                'bulan': month,
+                'avg_minutes': 0,
+                'count': 0
+            })
+            continue
+
+        # Calculate average
+        durations = location_df[col_penanganan].dropna().apply(parse_duration_to_minutes)
+        durations = durations[durations > 0]
+
+        if len(durations) > 0:
+            avg_minutes = durations.mean()
+            monthly_results.append({
+                'bulan': month,
+                'avg_minutes': round(avg_minutes, 2),
+                'count': len(durations)
+            })
+        else:
+            monthly_results.append({
+                'bulan': month,
+                'avg_minutes': 0,
+                'count': 0
+            })
+
+    return monthly_results
+
+
+# ==================== ROUTES ====================
 
 @app.route('/')
 def index():
-    return render_template('dashboard.html')
+    return render_template('dashboard.html', default_url=DEFAULT_SPREADSHEET_URL)
+
+
+@app.route('/api/config')
+def get_config():
+    return jsonify({
+        'default_spreadsheet_url': DEFAULT_SPREADSHEET_URL,
+        'last_update': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    })
+
 
 @app.route('/api/data', methods=['POST'])
 def get_data():
+    """
+    API endpoint utama - menghitung average dari data mentah
+    """
     try:
         data = request.json
         spreadsheet_url = data.get('spreadsheet_url', '')
-        
-        location_data = []
-        
-        if spreadsheet_url:
-            df = get_spreadsheet_data(spreadsheet_url)
-            
-            if df is not None:
-                sheet_id = spreadsheet_url.split('/d/')[1].split('/')[0]
-                gid = None
-                if 'gid=' in spreadsheet_url:
-                    gid = spreadsheet_url.split('gid=')[1].split('#')[0].split('&')[0]
-                
-                sheet_name = 'AVG'
-                if gid:
-                    csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
-                else:
-                    import urllib.parse
-                    encoded_sheet = urllib.parse.quote(sheet_name)
-                    csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&sheet={encoded_sheet}"
-                
-                try:
-                    import urllib.request
-                    response = urllib.request.urlopen(csv_url)
-                    csv_data = response.read().decode('utf-8')
-                    location_data = read_location_data_from_csv(csv_data)
-                except:
-                    pass
-        else:
-            df = read_local_excel('/mnt/user-data/uploads/LAPORAN_HARIAN_HELPDESK_2025_BARU.xlsx')
-            location_data = read_location_data('/mnt/user-data/uploads/LAPORAN_HARIAN_HELPDESK_2025_BARU.xlsx')
-        
-        if df is None:
-            return jsonify({'success': False, 'message': 'Gagal membaca data. Pastikan spreadsheet sudah di-share sebagai "Anyone with the link"'})
-        
-        monthly_data = []
-        quarterly_data = []
-        
-        for idx, row in df.iterrows():
-            bulan = str(row['BULAN']).upper()
-            
-            if 'TRIWULAN' in bulan or 'KUARTAL' in bulan:
-                quarterly_data.append({
-                    'period': bulan,
-                    'avg_respon_minutes': float(row['avg_respon_minutes']),
-                    'avg_penanganan_minutes': float(row['avg_penanganan_minutes'])
-                })
-            elif bulan and bulan != 'NAN':
-                monthly_data.append({
-                    'bulan': bulan,
-                    'avg_respon_minutes': float(row['avg_respon_minutes']),
-                    'avg_penanganan_minutes': float(row['avg_penanganan_minutes'])
-                })
-        
-        yearly_avg_respon = df[~df['BULAN'].str.contains('TRIWULAN|KUARTAL', na=False)]['avg_respon_minutes'].mean()
-        yearly_avg_penanganan = df[~df['BULAN'].str.contains('TRIWULAN|KUARTAL', na=False)]['avg_penanganan_minutes'].mean()
-        
+
+        if not spreadsheet_url:
+            spreadsheet_url = DEFAULT_SPREADSHEET_URL
+
+        print(f"\n{'='*50}")
+        print(f"Memproses spreadsheet: {spreadsheet_url}")
+        print(f"{'='*50}")
+
+        # Hitung dari data mentah
+        monthly_data, quarterly_data, location_data = calculate_monthly_averages_from_raw(spreadsheet_url)
+
+        if monthly_data is None:
+            return jsonify({
+                'success': False,
+                'message': 'Gagal membaca data. Pastikan spreadsheet sudah di-share sebagai "Anyone with the link"'
+            })
+
+        # Filter hanya bulan dengan data valid
+        valid_monthly = [m for m in monthly_data if m['status'] == 'ok' and (m['avg_respon_minutes'] > 0 or m['avg_penanganan_minutes'] > 0)]
+
+        # Hitung yearly average
+        yearly_avg_respon = 0
+        yearly_avg_penanganan = 0
+
+        if valid_monthly:
+            respon_values = [m['avg_respon_minutes'] for m in valid_monthly if m['avg_respon_minutes'] > 0]
+            penanganan_values = [m['avg_penanganan_minutes'] for m in valid_monthly if m['avg_penanganan_minutes'] > 0]
+
+            if respon_values:
+                yearly_avg_respon = sum(respon_values) / len(respon_values)
+            if penanganan_values:
+                yearly_avg_penanganan = sum(penanganan_values) / len(penanganan_values)
+
         return jsonify({
             'success': True,
+            'calculated_from': 'raw_data',
+            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             'data': {
-                'monthly': monthly_data,
+                'monthly': [{
+                    'bulan': m['bulan'],
+                    'avg_respon_minutes': m['avg_respon_minutes'],
+                    'avg_penanganan_minutes': m['avg_penanganan_minutes'],
+                    'total_tiket': m.get('total_tiket', 0)
+                } for m in monthly_data if m['status'] == 'ok'],
                 'quarterly': quarterly_data,
                 'yearly': {
-                    'avg_respon_minutes': float(yearly_avg_respon),
-                    'avg_penanganan_minutes': float(yearly_avg_penanganan)
+                    'avg_respon_minutes': round(yearly_avg_respon, 2),
+                    'avg_penanganan_minutes': round(yearly_avg_penanganan, 2)
                 },
-                'locations': location_data
+                'locations': location_data,
+                'summary': {
+                    'total_months_processed': len([m for m in monthly_data if m['status'] == 'ok']),
+                    'total_locations': len(location_data),
+                    'total_tiket': sum(m.get('total_tiket', 0) for m in monthly_data)
+                }
             }
         })
-    
+
     except Exception as e:
         import traceback
         traceback.print_exc()
         return jsonify({'success': False, 'message': str(e)})
 
+
 @app.route('/api/location-monthly', methods=['POST'])
 def get_location_monthly():
+    """API untuk mendapatkan data bulanan per lokasi"""
     try:
         data = request.json
         location = data.get('location', '')
-        
+        spreadsheet_url = data.get('spreadsheet_url', DEFAULT_SPREADSHEET_URL)
+
         if not location:
             return jsonify({'success': False, 'message': 'Lokasi tidak boleh kosong'})
-        
-        monthly_data = read_monthly_data_per_location(
-            '/mnt/user-data/uploads/LAPORAN_HARIAN_HELPDESK_2025_BARU.xlsx',
-            location
-        )
-        
+
+        monthly_data = calculate_location_monthly_from_raw(spreadsheet_url, location)
+
         return jsonify({
             'success': True,
             'data': {
@@ -479,32 +516,290 @@ def get_location_monthly():
                 'monthly': monthly_data
             }
         })
-    
+
     except Exception as e:
         import traceback
         traceback.print_exc()
         return jsonify({'success': False, 'message': str(e)})
 
-@app.route('/api/locations-list', methods=['GET'])
+
+@app.route('/api/locations-list', methods=['POST'])
 def get_locations_list():
+    """API untuk mendapatkan daftar lokasi"""
     try:
-        locations = get_all_locations_from_monthly_sheets(
-            '/mnt/user-data/uploads/LAPORAN_HARIAN_HELPDESK_2025_BARU.xlsx'
-        )
-        
+        data = request.json
+        spreadsheet_url = data.get('spreadsheet_url', DEFAULT_SPREADSHEET_URL)
+
+        locations = get_all_locations_from_spreadsheet(spreadsheet_url)
+
         return jsonify({
             'success': True,
             'data': {
                 'locations': locations
             }
         })
-    
+
     except Exception as e:
         import traceback
         traceback.print_exc()
         return jsonify({'success': False, 'message': str(e)})
 
+
+@app.route('/api/raw-data', methods=['POST'])
+def get_raw_data():
+    """API untuk melihat data mentah dari sheet tertentu (untuk debugging)"""
+    try:
+        data = request.json
+        spreadsheet_url = data.get('spreadsheet_url', DEFAULT_SPREADSHEET_URL)
+        sheet_name = data.get('sheet_name', 'JANUARI')
+        limit = data.get('limit', 10)
+
+        sheet_id = extract_spreadsheet_id(spreadsheet_url)
+        csv_data = download_sheet_as_csv(sheet_id, sheet_name)
+
+        if csv_data is None:
+            return jsonify({'success': False, 'message': f'Sheet {sheet_name} tidak ditemukan'})
+
+        df = parse_csv_to_dataframe(csv_data)
+        if df is None:
+            return jsonify({'success': False, 'message': 'Gagal parse data'})
+
+        return jsonify({
+            'success': True,
+            'data': {
+                'sheet_name': sheet_name,
+                'columns': df.columns.tolist(),
+                'total_rows': len(df),
+                'sample_data': df.head(limit).to_dict('records')
+            }
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)})
+
+
+@app.route('/api/month-detail', methods=['POST'])
+def get_month_detail():
+    """
+    API untuk mendapatkan detail data untuk bulan tertentu
+    Termasuk breakdown per lokasi
+    """
+    try:
+        data = request.json
+        spreadsheet_url = data.get('spreadsheet_url', DEFAULT_SPREADSHEET_URL)
+        month = data.get('month', 'JANUARI').upper()
+
+        if month not in MONTHS:
+            return jsonify({'success': False, 'message': f'Bulan {month} tidak valid'})
+
+        sheet_id = extract_spreadsheet_id(spreadsheet_url)
+        csv_data = download_sheet_as_csv(sheet_id, month)
+
+        if csv_data is None:
+            return jsonify({'success': False, 'message': f'Sheet {month} tidak ditemukan'})
+
+        df = parse_csv_to_dataframe(csv_data)
+        if df is None or df.empty:
+            return jsonify({'success': False, 'message': f'Sheet {month} kosong'})
+
+        # Cari kolom yang sesuai
+        col_respon = find_column(df, 'durasi_respon')
+        col_penanganan = find_column(df, 'durasi_penanganan')
+        col_lokasi = find_column(df, 'lokasi')
+
+        # Hitung overall average untuk bulan ini
+        avg_respon = 0
+        avg_penanganan = 0
+        total_tiket = len(df)
+
+        if col_respon:
+            respon_values = df[col_respon].dropna().apply(parse_duration_to_minutes)
+            respon_values = respon_values[respon_values > 0]
+            if len(respon_values) > 0:
+                avg_respon = respon_values.mean()
+
+        if col_penanganan:
+            penanganan_values = df[col_penanganan].dropna().apply(parse_duration_to_minutes)
+            penanganan_values = penanganan_values[penanganan_values > 0]
+            if len(penanganan_values) > 0:
+                avg_penanganan = penanganan_values.mean()
+
+        # Hitung per lokasi
+        location_breakdown = []
+        if col_lokasi and col_penanganan:
+            for lokasi in df[col_lokasi].dropna().unique():
+                if not lokasi or lokasi in ['GMEDIA', 'nan', '', None]:
+                    continue
+
+                lokasi_df = df[df[col_lokasi] == lokasi]
+                tiket_count = len(lokasi_df)
+
+                # Avg respon per lokasi
+                avg_respon_lokasi = 0
+                if col_respon:
+                    respon_vals = lokasi_df[col_respon].dropna().apply(parse_duration_to_minutes)
+                    respon_vals = respon_vals[respon_vals > 0]
+                    if len(respon_vals) > 0:
+                        avg_respon_lokasi = respon_vals.mean()
+
+                # Avg penanganan per lokasi
+                avg_penanganan_lokasi = 0
+                penanganan_vals = lokasi_df[col_penanganan].dropna().apply(parse_duration_to_minutes)
+                penanganan_vals = penanganan_vals[penanganan_vals > 0]
+                if len(penanganan_vals) > 0:
+                    avg_penanganan_lokasi = penanganan_vals.mean()
+
+                category = get_location_category(lokasi)
+                location_breakdown.append({
+                    'location': lokasi,
+                    'category': category,
+                    'total_tiket': tiket_count,
+                    'avg_respon_minutes': round(avg_respon_lokasi, 2),
+                    'avg_penanganan_minutes': round(avg_penanganan_lokasi, 2)
+                })
+
+        # Sort by category then by avg_penanganan descending
+        location_breakdown = sorted(location_breakdown,
+                                   key=lambda x: (get_category_order(x['category']), -x['avg_penanganan_minutes']))
+
+        return jsonify({
+            'success': True,
+            'data': {
+                'month': month,
+                'summary': {
+                    'total_tiket': total_tiket,
+                    'avg_respon_minutes': round(avg_respon, 2),
+                    'avg_penanganan_minutes': round(avg_penanganan, 2),
+                    'total_lokasi': len(location_breakdown)
+                },
+                'location_breakdown': location_breakdown,
+                'columns_found': {
+                    'respon': col_respon,
+                    'penanganan': col_penanganan,
+                    'lokasi': col_lokasi
+                }
+            }
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)})
+
+
+@app.route('/api/yearly-recap', methods=['POST'])
+def get_yearly_recap():
+    """
+    API untuk mendapatkan rekap data 1 tahun dengan breakdown per triwulan
+    """
+    try:
+        data = request.json
+        spreadsheet_url = data.get('spreadsheet_url', DEFAULT_SPREADSHEET_URL)
+
+        # Hitung dari data mentah
+        monthly_data, quarterly_data, location_data = calculate_monthly_averages_from_raw(spreadsheet_url)
+
+        if monthly_data is None:
+            return jsonify({'success': False, 'message': 'Gagal membaca data'})
+
+        # Organize data per quarter
+        quarters_detail = {
+            'Q1': {'months': ['JANUARI', 'FEBRUARI', 'MARET'], 'data': [], 'locations': {}},
+            'Q2': {'months': ['APRIL', 'MEI', 'JUNI'], 'data': [], 'locations': {}},
+            'Q3': {'months': ['JULI', 'AGUSTUS', 'SEPTEMBER'], 'data': [], 'locations': {}},
+            'Q4': {'months': ['OKTOBER', 'NOVEMBER', 'DESEMBER'], 'data': [], 'locations': {}}
+        }
+
+        for m in monthly_data:
+            if m['status'] != 'ok':
+                continue
+            for q_name, q_info in quarters_detail.items():
+                if m['bulan'] in q_info['months']:
+                    q_info['data'].append(m)
+                    break
+
+        # Calculate quarterly averages
+        quarterly_summary = []
+        for q_name in ['Q1', 'Q2', 'Q3', 'Q4']:
+            q_data = quarters_detail[q_name]['data']
+            if q_data:
+                avg_respon = sum(m['avg_respon_minutes'] for m in q_data) / len(q_data)
+                avg_penanganan = sum(m['avg_penanganan_minutes'] for m in q_data) / len(q_data)
+                total_tiket = sum(m.get('total_tiket', 0) for m in q_data)
+                quarterly_summary.append({
+                    'quarter': q_name,
+                    'quarter_name': f'Triwulan {q_name[1]}',
+                    'months': quarters_detail[q_name]['months'],
+                    'avg_respon_minutes': round(avg_respon, 2),
+                    'avg_penanganan_minutes': round(avg_penanganan, 2),
+                    'total_tiket': total_tiket,
+                    'monthly_data': q_data
+                })
+
+        # Calculate yearly totals
+        valid_months = [m for m in monthly_data if m['status'] == 'ok']
+        yearly_avg_respon = 0
+        yearly_avg_penanganan = 0
+        yearly_total_tiket = 0
+
+        if valid_months:
+            respon_vals = [m['avg_respon_minutes'] for m in valid_months if m['avg_respon_minutes'] > 0]
+            penanganan_vals = [m['avg_penanganan_minutes'] for m in valid_months if m['avg_penanganan_minutes'] > 0]
+
+            if respon_vals:
+                yearly_avg_respon = sum(respon_vals) / len(respon_vals)
+            if penanganan_vals:
+                yearly_avg_penanganan = sum(penanganan_vals) / len(penanganan_vals)
+
+            yearly_total_tiket = sum(m.get('total_tiket', 0) for m in valid_months)
+
+        # Location yearly summary
+        location_yearly = []
+        for loc in location_data:
+            location_yearly.append({
+                'location': loc['location'],
+                'category': loc['category'],
+                'avg_penanganan_minutes': loc['avg_minutes'],
+                'total_records': loc.get('total_records', 0),
+                'monthly_breakdown': loc.get('monthly_data', [])
+            })
+
+        return jsonify({
+            'success': True,
+            'data': {
+                'yearly_summary': {
+                    'avg_respon_minutes': round(yearly_avg_respon, 2),
+                    'avg_penanganan_minutes': round(yearly_avg_penanganan, 2),
+                    'total_tiket': yearly_total_tiket,
+                    'total_months': len(valid_months),
+                    'total_lokasi': len(location_data)
+                },
+                'quarterly': quarterly_summary,
+                'monthly': [m for m in monthly_data if m['status'] == 'ok'],
+                'locations': location_yearly
+            }
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)})
+
+
 if __name__ == '__main__':
-    print("Dashboard Average Durasi Respon dan Penanganan Gangguan 2025")
+    print("="*60)
+    print("Dashboard Monitoring - Menghitung Average dari Data Mentah")
+    print("="*60)
     print("URL: http://127.0.0.1:5000")
+    print("")
+    print("Fitur:")
+    print("  - Membaca data dari setiap sheet bulanan (JANUARI-DESEMBER)")
+    print("  - Menghitung sendiri average durasi respon & penanganan")
+    print("  - Analisis per lokasi")
+    print("  - Detail per bulan dengan breakdown lokasi")
+    print("  - Rekap tahunan dengan breakdown triwulan")
+    print("  - Real-time dari Google Spreadsheet")
+    print("="*60)
     app.run(debug=True, host='0.0.0.0', port=5000)

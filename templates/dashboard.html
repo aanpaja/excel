@@ -1,0 +1,1563 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Dashboard - Monitoring Durasi Respon & Penanganan 2025</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+        .animate-spin {
+            animation: spin 1s linear infinite;
+        }
+        .animate-pulse-slow {
+            animation: pulse 2s ease-in-out infinite;
+        }
+        .animate-blink {
+            animation: blink 1s ease-in-out infinite;
+        }
+        .gradient-bg {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .card-shadow {
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        }
+        .live-indicator {
+            width: 10px;
+            height: 10px;
+            background-color: #22c55e;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 6px;
+        }
+        .live-indicator.active {
+            animation: blink 1s ease-in-out infinite;
+        }
+        .status-bar {
+            background: linear-gradient(90deg, #1e293b 0%, #334155 100%);
+        }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-slate-50 via-blue-50 to-slate-100 min-h-screen">
+    <!-- Status Bar -->
+    <div class="status-bar text-white py-2 px-4 sticky top-0 z-40 shadow-lg">
+        <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2">
+            <div class="flex items-center gap-4">
+                <div class="flex items-center">
+                    <span class="live-indicator" id="liveIndicator"></span>
+                    <span class="text-sm font-medium" id="statusText">Siap</span>
+                </div>
+                <div class="text-xs text-slate-300">
+                    Update terakhir: <span id="lastUpdate">-</span>
+                </div>
+            </div>
+            <div class="flex items-center gap-3">
+                <label class="flex items-center gap-2 cursor-pointer">
+                    <span class="text-xs text-slate-300">Auto Refresh</span>
+                    <input type="checkbox" id="autoRefreshToggle" class="w-4 h-4 rounded accent-green-500" onchange="toggleAutoRefresh()">
+                </label>
+                <select id="refreshInterval" class="bg-slate-700 text-white text-xs px-2 py-1 rounded border border-slate-600" onchange="updateRefreshInterval()">
+                    <option value="10000">10 detik</option>
+                    <option value="30000" selected>30 detik</option>
+                    <option value="60000">1 menit</option>
+                    <option value="300000">5 menit</option>
+                </select>
+                <span class="text-xs text-slate-400" id="nextRefresh"></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <!-- Header -->
+        <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 sm:p-8 mb-6">
+            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div>
+                    <div class="flex items-center gap-3 mb-2">
+                        <div class="w-12 h-12 bg-gradient-to-br from-purple-600 to-blue-700 rounded-xl flex items-center justify-center shadow-lg shadow-purple-500/30">
+                            <svg class="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+                            </svg>
+                        </div>
+                        <div>
+                            <div class="flex items-center gap-2 flex-wrap">
+                                <h1 class="text-2xl sm:text-3xl font-bold text-slate-900">Live Dashboard Monitoring 2025</h1>
+                                <span class="px-2 py-1 bg-green-100 text-green-700 text-xs font-semibold rounded-full">Kalkulasi Otomatis</span>
+                            </div>
+                            <p class="text-slate-600 text-sm mt-0.5">Average dihitung langsung dari data mentah setiap sheet bulanan</p>
+                        </div>
+                    </div>
+                </div>
+                <button onclick="loadData()" id="loadBtn" class="px-6 py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-medium shadow-sm transition-all duration-200 hover:shadow-md flex items-center gap-2">
+                    <svg class="w-5 h-5" id="refreshIcon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                    </svg>
+                    <span>Refresh Data</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Spreadsheet URL Input -->
+        <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 mb-6">
+            <h2 class="text-lg font-semibold text-slate-800 mb-4 flex items-center gap-2">
+                <svg class="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                </svg>
+                Google Spreadsheet URL
+            </h2>
+            <div class="flex gap-3">
+                <input type="text" id="spreadsheetUrl" placeholder="Paste Google Spreadsheet URL disini" class="flex-1 px-4 py-3 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent" value="{{ default_url or '' }}">
+                <button onclick="loadData()" class="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium shadow-sm transition-all duration-200 flex items-center gap-2">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                    </svg>
+                    Load
+                </button>
+            </div>
+            <p class="text-sm text-slate-500 mt-2">
+                <span class="text-amber-600 font-medium">Penting:</span> Pastikan spreadsheet sudah di-share sebagai "Anyone with the link" (view access)
+            </p>
+        </div>
+
+        <!-- Summary Cards -->
+        <div id="summaryCards" class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+            <div class="bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl p-5 text-white card-shadow">
+                <div class="flex items-center justify-between mb-2">
+                    <h3 class="text-sm font-medium opacity-90">Avg Respon Tahunan</h3>
+                    <svg class="w-6 h-6 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg>
+                </div>
+                <p class="text-2xl font-bold" id="avgResponYearly">-</p>
+                <p class="text-xs opacity-80 mt-1" id="avgResponYearlyMinutes">-</p>
+            </div>
+            <div class="bg-gradient-to-br from-purple-500 to-purple-600 rounded-2xl p-5 text-white card-shadow">
+                <div class="flex items-center justify-between mb-2">
+                    <h3 class="text-sm font-medium opacity-90">Avg Penanganan Tahunan</h3>
+                    <svg class="w-6 h-6 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+                    </svg>
+                </div>
+                <p class="text-2xl font-bold" id="avgPenangananYearly">-</p>
+                <p class="text-xs opacity-80 mt-1" id="avgPenangananYearlyMinutes">-</p>
+            </div>
+            <div class="bg-gradient-to-br from-green-500 to-green-600 rounded-2xl p-5 text-white card-shadow">
+                <div class="flex items-center justify-between mb-2">
+                    <h3 class="text-sm font-medium opacity-90">Total Tiket Diproses</h3>
+                    <svg class="w-6 h-6 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/>
+                    </svg>
+                </div>
+                <p class="text-2xl font-bold" id="totalTiket">-</p>
+                <p class="text-xs opacity-80 mt-1" id="totalBulanInfo">-</p>
+            </div>
+            <div class="bg-gradient-to-br from-orange-500 to-red-500 rounded-2xl p-5 text-white card-shadow">
+                <div class="flex items-center justify-between mb-2">
+                    <h3 class="text-sm font-medium opacity-90">Total Lokasi</h3>
+                    <svg class="w-6 h-6 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/>
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/>
+                    </svg>
+                </div>
+                <p class="text-2xl font-bold" id="totalLokasi">-</p>
+                <p class="text-xs opacity-80 mt-1">Dipantau</p>
+            </div>
+        </div>
+
+        <!-- Month Selector Section -->
+        <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 mb-6">
+            <h2 class="text-lg font-semibold text-slate-800 mb-4 flex items-center gap-2">
+                <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                </svg>
+                Pilih Periode
+            </h2>
+            <div class="flex flex-wrap gap-2">
+                <button onclick="loadMonthDetail('REKAP')" id="btn-REKAP" class="px-4 py-2 rounded-lg font-medium transition-all duration-200 bg-purple-600 text-white">
+                    Rekap 1 Tahun
+                </button>
+                <button onclick="loadMonthDetail('JANUARI')" id="btn-JANUARI" class="px-4 py-2 rounded-lg font-medium transition-all duration-200 bg-slate-100 text-slate-700 hover:bg-slate-200">
+                    Januari
+                </button>
+                <button onclick="loadMonthDetail('FEBRUARI')" id="btn-FEBRUARI" class="px-4 py-2 rounded-lg font-medium transition-all duration-200 bg-slate-100 text-slate-700 hover:bg-slate-200">
+                    Februari
+                </button>
+                <button onclick="loadMonthDetail('MARET')" id="btn-MARET" class="px-4 py-2 rounded-lg font-medium transition-all duration-200 bg-slate-100 text-slate-700 hover:bg-slate-200">
+                    Maret
+                </button>
+                <button onclick="loadMonthDetail('APRIL')" id="btn-APRIL" class="px-4 py-2 rounded-lg font-medium transition-all duration-200 bg-slate-100 text-slate-700 hover:bg-slate-200">
+                    April
+                </button>
+                <button onclick="loadMonthDetail('MEI')" id="btn-MEI" class="px-4 py-2 rounded-lg font-medium transition-all duration-200 bg-slate-100 text-slate-700 hover:bg-slate-200">
+                    Mei
+                </button>
+                <button onclick="loadMonthDetail('JUNI')" id="btn-JUNI" class="px-4 py-2 rounded-lg font-medium transition-all duration-200 bg-slate-100 text-slate-700 hover:bg-slate-200">
+                    Juni
+                </button>
+                <button onclick="loadMonthDetail('JULI')" id="btn-JULI" class="px-4 py-2 rounded-lg font-medium transition-all duration-200 bg-slate-100 text-slate-700 hover:bg-slate-200">
+                    Juli
+                </button>
+                <button onclick="loadMonthDetail('AGUSTUS')" id="btn-AGUSTUS" class="px-4 py-2 rounded-lg font-medium transition-all duration-200 bg-slate-100 text-slate-700 hover:bg-slate-200">
+                    Agustus
+                </button>
+                <button onclick="loadMonthDetail('SEPTEMBER')" id="btn-SEPTEMBER" class="px-4 py-2 rounded-lg font-medium transition-all duration-200 bg-slate-100 text-slate-700 hover:bg-slate-200">
+                    September
+                </button>
+                <button onclick="loadMonthDetail('OKTOBER')" id="btn-OKTOBER" class="px-4 py-2 rounded-lg font-medium transition-all duration-200 bg-slate-100 text-slate-700 hover:bg-slate-200">
+                    Oktober
+                </button>
+                <button onclick="loadMonthDetail('NOVEMBER')" id="btn-NOVEMBER" class="px-4 py-2 rounded-lg font-medium transition-all duration-200 bg-slate-100 text-slate-700 hover:bg-slate-200">
+                    November
+                </button>
+                <button onclick="loadMonthDetail('DESEMBER')" id="btn-DESEMBER" class="px-4 py-2 rounded-lg font-medium transition-all duration-200 bg-slate-100 text-slate-700 hover:bg-slate-200">
+                    Desember
+                </button>
+            </div>
+        </div>
+
+        <!-- Monthly Detail Section (hidden by default, shown when month selected) -->
+        <div id="monthDetailSection" class="mb-6" style="display: none;">
+            <div class="bg-gradient-to-r from-blue-600 to-purple-600 rounded-2xl p-6 mb-6 text-white">
+                <h2 class="text-2xl font-bold mb-2" id="monthDetailTitle">Detail Bulan</h2>
+                <p class="opacity-90" id="monthDetailSubtitle">Data lengkap untuk periode yang dipilih</p>
+            </div>
+
+            <!-- Monthly Summary Cards -->
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
+                    <h3 class="text-sm font-medium text-slate-500 mb-1">Total Tiket</h3>
+                    <p class="text-2xl font-bold text-slate-900" id="monthTotalTiket">-</p>
+                </div>
+                <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
+                    <h3 class="text-sm font-medium text-slate-500 mb-1">Avg Respon</h3>
+                    <p class="text-2xl font-bold text-blue-600" id="monthAvgRespon">-</p>
+                </div>
+                <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
+                    <h3 class="text-sm font-medium text-slate-500 mb-1">Avg Penanganan</h3>
+                    <p class="text-2xl font-bold text-purple-600" id="monthAvgPenanganan">-</p>
+                </div>
+                <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
+                    <h3 class="text-sm font-medium text-slate-500 mb-1">Total Lokasi</h3>
+                    <p class="text-2xl font-bold text-orange-600" id="monthTotalLokasi">-</p>
+                </div>
+            </div>
+
+            <!-- Chart per Lokasi -->
+            <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 mb-6">
+                <h3 class="text-lg font-semibold text-slate-800 mb-4">Avg Penanganan per Lokasi</h3>
+                <div class="h-96">
+                    <canvas id="monthLocationChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Table Breakdown Lokasi -->
+            <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+                <h3 class="text-lg font-semibold text-slate-800 mb-4">Detail per Lokasi</h3>
+                <div class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-slate-200">
+                        <thead class="bg-slate-50">
+                            <tr>
+                                <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Lokasi</th>
+                                <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Kategori</th>
+                                <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Tiket</th>
+                                <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Avg Respon</th>
+                                <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Avg Penanganan</th>
+                            </tr>
+                        </thead>
+                        <tbody id="monthLocationTableBody" class="bg-white divide-y divide-slate-200">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Yearly Recap Section (hidden by default) -->
+        <div id="yearlyRecapSection" class="mb-6" style="display: none;">
+            <div class="bg-gradient-to-r from-green-600 to-teal-600 rounded-2xl p-6 mb-6 text-white">
+                <h2 class="text-2xl font-bold mb-2">Rekap Data 1 Tahun 2025</h2>
+                <p class="opacity-90">Ringkasan lengkap dengan breakdown per triwulan</p>
+            </div>
+
+            <!-- Quarterly Cards -->
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6" id="quarterlyCards">
+            </div>
+
+            <!-- Quarterly Chart -->
+            <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 mb-6">
+                <h3 class="text-lg font-semibold text-slate-800 mb-4">Perbandingan per Triwulan</h3>
+                <div class="h-80">
+                    <canvas id="yearlyQuarterChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Yearly Location Ranking -->
+            <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 mb-6">
+                <h3 class="text-lg font-semibold text-slate-800 mb-4">Ranking Lokasi (Avg Penanganan Tahunan)</h3>
+                <div class="h-96">
+                    <canvas id="yearlyLocationRankChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Quarterly Detail Tables -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6" id="quarterlyDetailTables">
+            </div>
+        </div>
+
+        <!-- Filter Section -->
+        <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 mb-6" id="locationFilterSection" style="display: none;">
+            <h2 class="text-lg font-semibold text-slate-800 mb-4">Filter & Perbandingan Lokasi</h2>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 mb-2">Pilih Lokasi untuk Trend</label>
+                    <select id="locationFilter" class="w-full px-4 py-3 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent" onchange="updateLocationCharts()">
+                        <option value="all">Semua Lokasi (Top 5)</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 mb-2">Lokasi 1 untuk Comparison</label>
+                    <select id="compareLocation1" class="w-full px-4 py-3 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent" onchange="updateComparisonChart()">
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 mb-2">Lokasi 2 untuk Comparison</label>
+                    <select id="compareLocation2" class="w-full px-4 py-3 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent" onchange="updateComparisonChart()">
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <!-- Charts Row 1 -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+            <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+                <h2 class="text-lg font-semibold text-slate-800 mb-4">Average Durasi Respon per Bulan</h2>
+                <div class="h-72">
+                    <canvas id="responChart"></canvas>
+                </div>
+            </div>
+            <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+                <h2 class="text-lg font-semibold text-slate-800 mb-4">Average Penanganan Gangguan per Bulan</h2>
+                <div class="h-72">
+                    <canvas id="penangananChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Combined Chart -->
+        <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 mb-6">
+            <h2 class="text-lg font-semibold text-slate-800 mb-4">Perbandingan Respon vs Penanganan per Bulan</h2>
+            <div class="h-80">
+                <canvas id="combinedChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Charts Row 2 -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+            <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+                <h2 class="text-lg font-semibold text-slate-800 mb-4">Average per Triwulan/Kuartal</h2>
+                <div class="h-72">
+                    <canvas id="quarterlyChart"></canvas>
+                </div>
+            </div>
+            <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+                <h2 class="text-lg font-semibold text-slate-800 mb-4">Distribusi Total Durasi</h2>
+                <div class="h-72">
+                    <canvas id="distributionChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Location Charts Section -->
+        <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 mb-6" id="locationChartsSection" style="display: none;">
+            <h2 class="text-lg font-semibold text-slate-800 mb-6 flex items-center gap-2">
+                <svg class="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/>
+                </svg>
+                Analisis Per Lokasi
+            </h2>
+
+            <!-- Category Legend -->
+            <div class="mb-4 p-4 bg-gradient-to-r from-blue-50 to-purple-50 rounded-xl border border-blue-200">
+                <h3 class="text-sm font-semibold text-slate-700 mb-2">Legend Kategori:</h3>
+                <div class="flex flex-wrap gap-3">
+                    <div class="flex items-center gap-2">
+                        <div class="w-4 h-4 rounded" style="background-color: rgba(99, 102, 241, 0.8);"></div>
+                        <span class="text-xs text-slate-600">Corporate</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <div class="w-4 h-4 rounded" style="background-color: rgba(147, 51, 234, 0.8);"></div>
+                        <span class="text-xs text-slate-600">Retail</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <div class="w-4 h-4 rounded" style="background-color: rgba(34, 197, 94, 0.8);"></div>
+                        <span class="text-xs text-slate-600">POP</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <div class="w-4 h-4 rounded" style="background-color: rgba(249, 115, 22, 0.8);"></div>
+                        <span class="text-xs text-slate-600">Pemerintahan</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <div class="w-4 h-4 rounded" style="background-color: rgba(236, 72, 153, 0.8);"></div>
+                        <span class="text-xs text-slate-600">Disdik</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <div class="w-4 h-4 rounded" style="background-color: rgba(14, 165, 233, 0.8);"></div>
+                        <span class="text-xs text-slate-600">TEKKOMDIK</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Location Avg Chart -->
+            <div class="mb-6">
+                <h3 class="text-md font-semibold text-slate-700 mb-4">Average Penanganan Gangguan per Lokasi (Sorted)</h3>
+                <div class="h-96">
+                    <canvas id="locationAvgChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Location Trend & Comparison -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div>
+                    <h3 class="text-md font-semibold text-slate-700 mb-4">Trend Per Lokasi (Bulanan)</h3>
+                    <div class="h-72">
+                        <canvas id="locationTrendChart"></canvas>
+                    </div>
+                </div>
+                <div>
+                    <h3 class="text-md font-semibold text-slate-700 mb-4">Comparison 2 Lokasi</h3>
+                    <div class="h-72">
+                        <canvas id="locationComparisonChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Location Monthly Analysis -->
+        <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 mb-6" id="locationMonthlySection">
+            <h2 class="text-lg font-semibold text-slate-800 mb-6">Analisis Detail Per Lokasi Per Bulan</h2>
+
+            <div class="mb-6">
+                <label class="block text-sm font-medium text-slate-700 mb-2">Pilih Lokasi untuk Melihat Data Bulanan</label>
+                <select id="locationSelector" class="w-full md:w-1/2 px-4 py-3 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent" onchange="loadLocationMonthlyData()">
+                    <option value="">-- Pilih Lokasi --</option>
+                </select>
+            </div>
+
+            <div id="locationMonthlyContent" style="display: none;">
+                <div class="mb-6">
+                    <h3 class="text-md font-semibold text-slate-700 mb-4">Average Penanganan untuk <span id="selectedLocationName" class="text-purple-600"></span></h3>
+                    <div class="h-80">
+                        <canvas id="locationMonthlyChart"></canvas>
+                    </div>
+                </div>
+
+                <div class="overflow-x-auto">
+                    <h3 class="text-md font-semibold text-slate-700 mb-4">Tabel Detail per Bulan</h3>
+                    <table class="min-w-full divide-y divide-slate-200">
+                        <thead class="bg-gradient-to-r from-blue-50 to-purple-50">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-slate-700 uppercase tracking-wider">Bulan</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-slate-700 uppercase tracking-wider">Average Durasi</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-slate-700 uppercase tracking-wider">Jumlah Kejadian</th>
+                            </tr>
+                        </thead>
+                        <tbody id="locationMonthlyTableBody" class="bg-white divide-y divide-slate-200">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Data Table -->
+        <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+            <h2 class="text-lg font-semibold text-slate-800 mb-4">Tabel Data Bulanan</h2>
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-slate-200" id="dataTable">
+                    <thead class="bg-slate-50">
+                        <tr>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Bulan</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Avg Respon</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Avg Penanganan</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Selisih</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Total Tiket</th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-white divide-y divide-slate-200" id="tableBody">
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="mt-8 text-center text-sm text-slate-500">
+            <p>Dashboard Monitoring Real-time - Data diambil langsung dari Google Spreadsheet</p>
+            <p class="mt-1">Sheet: AVG | Auto-refresh tersedia untuk monitoring live</p>
+        </div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-2xl p-8 text-center">
+            <div class="animate-spin rounded-full h-16 w-16 border-b-4 border-purple-600 mx-auto mb-4"></div>
+            <p class="text-lg font-medium text-slate-700">Memuat data dari spreadsheet...</p>
+            <p class="text-sm text-slate-500 mt-2">Mohon tunggu sebentar</p>
+        </div>
+    </div>
+
+    <script>
+        // Chart instances
+        let responChart, penangananChart, combinedChart, quarterlyChart, distributionChart;
+        let locationAvgChart, locationTrendChart, locationComparisonChart, locationMonthlyChart;
+
+        // Data storage
+        let allLocationData = [];
+        let currentData = null;
+
+        // Auto-refresh variables
+        let autoRefreshEnabled = false;
+        let refreshIntervalId = null;
+        let countdownIntervalId = null;
+        let nextRefreshTime = null;
+
+        // Utility functions
+        function formatMinutes(minutes) {
+            const hours = Math.floor(minutes / 60);
+            const mins = Math.round(minutes % 60);
+            return hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+        }
+
+        function formatDuration(minutes) {
+            const days = Math.floor(minutes / (24 * 60));
+            const hours = Math.floor((minutes % (24 * 60)) / 60);
+            const mins = Math.round(minutes % 60);
+
+            if (days > 0) {
+                return `${days}d ${hours}h ${mins}m`;
+            } else if (hours > 0) {
+                return `${hours}h ${mins}m`;
+            } else {
+                return `${mins}m`;
+            }
+        }
+
+        function showLoading() {
+            document.getElementById('loadingOverlay').classList.remove('hidden');
+        }
+
+        function hideLoading() {
+            document.getElementById('loadingOverlay').classList.add('hidden');
+        }
+
+        function updateStatus(text, isLive = false) {
+            document.getElementById('statusText').textContent = text;
+            const indicator = document.getElementById('liveIndicator');
+            if (isLive) {
+                indicator.classList.add('active');
+                indicator.style.backgroundColor = '#22c55e';
+            } else {
+                indicator.classList.remove('active');
+                indicator.style.backgroundColor = '#94a3b8';
+            }
+        }
+
+        function updateLastUpdate() {
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            document.getElementById('lastUpdate').textContent = timeStr;
+        }
+
+        // Auto-refresh functions
+        function toggleAutoRefresh() {
+            autoRefreshEnabled = document.getElementById('autoRefreshToggle').checked;
+
+            if (autoRefreshEnabled) {
+                startAutoRefresh();
+                updateStatus('Live Monitoring', true);
+            } else {
+                stopAutoRefresh();
+                updateStatus('Auto-refresh OFF', false);
+            }
+        }
+
+        function updateRefreshInterval() {
+            if (autoRefreshEnabled) {
+                stopAutoRefresh();
+                startAutoRefresh();
+            }
+        }
+
+        function startAutoRefresh() {
+            const interval = parseInt(document.getElementById('refreshInterval').value);
+
+            // Set next refresh time
+            nextRefreshTime = Date.now() + interval;
+
+            // Start countdown display
+            updateCountdown();
+            countdownIntervalId = setInterval(updateCountdown, 1000);
+
+            // Start auto-refresh
+            refreshIntervalId = setInterval(() => {
+                loadData(true); // silent refresh
+                nextRefreshTime = Date.now() + interval;
+            }, interval);
+        }
+
+        function stopAutoRefresh() {
+            if (refreshIntervalId) {
+                clearInterval(refreshIntervalId);
+                refreshIntervalId = null;
+            }
+            if (countdownIntervalId) {
+                clearInterval(countdownIntervalId);
+                countdownIntervalId = null;
+            }
+            document.getElementById('nextRefresh').textContent = '';
+        }
+
+        function updateCountdown() {
+            if (!nextRefreshTime) return;
+
+            const remaining = Math.max(0, Math.ceil((nextRefreshTime - Date.now()) / 1000));
+            document.getElementById('nextRefresh').textContent = `Next: ${remaining}s`;
+        }
+
+        // Update summary cards
+        function updateSummaryCards(data) {
+            document.getElementById('avgResponYearly').textContent = formatDuration(data.yearly.avg_respon_minutes);
+            document.getElementById('avgResponYearlyMinutes').textContent = `${data.yearly.avg_respon_minutes.toFixed(2)} menit`;
+
+            document.getElementById('avgPenangananYearly').textContent = formatDuration(data.yearly.avg_penanganan_minutes);
+            document.getElementById('avgPenangananYearlyMinutes').textContent = `${data.yearly.avg_penanganan_minutes.toFixed(2)} menit`;
+
+            const totalTiket = data.summary ? data.summary.total_tiket : data.monthly.reduce((sum, m) => sum + (m.total_tiket || 0), 0);
+            document.getElementById('totalTiket').textContent = totalTiket.toLocaleString('id-ID');
+            document.getElementById('totalBulanInfo').textContent = `${data.monthly.length} bulan diproses`;
+
+            document.getElementById('totalLokasi').textContent = data.locations ? data.locations.length : 0;
+        }
+
+        // Update table
+        function updateTable(data) {
+            const tbody = document.getElementById('tableBody');
+            let html = '';
+
+            data.monthly.forEach(item => {
+                const selisih = item.avg_penanganan_minutes - item.avg_respon_minutes;
+                const totalTiket = item.total_tiket || '-';
+                html += `
+                    <tr class="hover:bg-slate-50 transition-colors">
+                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-slate-900">${item.bulan}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-700">${formatDuration(item.avg_respon_minutes)}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-700">${formatDuration(item.avg_penanganan_minutes)}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-700">${formatDuration(selisih)}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-500">${totalTiket}</td>
+                    </tr>
+                `;
+            });
+
+            tbody.innerHTML = html;
+        }
+
+        // Chart creation functions
+        function createResponChart(data) {
+            const ctx = document.getElementById('responChart').getContext('2d');
+            if (responChart) responChart.destroy();
+
+            responChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: data.monthly.map(d => d.bulan),
+                    datasets: [{
+                        label: 'Avg Durasi Respon',
+                        data: data.monthly.map(d => d.avg_respon_minutes),
+                        backgroundColor: 'rgba(59, 130, 246, 0.8)',
+                        borderColor: 'rgba(59, 130, 246, 1)',
+                        borderWidth: 2,
+                        borderRadius: 6
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: ctx => 'Durasi: ' + formatDuration(ctx.parsed.y)
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: { callback: v => formatMinutes(v) }
+                        }
+                    }
+                }
+            });
+        }
+
+        function createPenangananChart(data) {
+            const ctx = document.getElementById('penangananChart').getContext('2d');
+            if (penangananChart) penangananChart.destroy();
+
+            penangananChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: data.monthly.map(d => d.bulan),
+                    datasets: [{
+                        label: 'Avg Penanganan Gangguan',
+                        data: data.monthly.map(d => d.avg_penanganan_minutes),
+                        backgroundColor: 'rgba(147, 51, 234, 0.8)',
+                        borderColor: 'rgba(147, 51, 234, 1)',
+                        borderWidth: 2,
+                        borderRadius: 6
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: ctx => 'Durasi: ' + formatDuration(ctx.parsed.y)
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: { callback: v => formatDuration(v) }
+                        }
+                    }
+                }
+            });
+        }
+
+        function createCombinedChart(data) {
+            const ctx = document.getElementById('combinedChart').getContext('2d');
+            if (combinedChart) combinedChart.destroy();
+
+            combinedChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: data.monthly.map(d => d.bulan),
+                    datasets: [
+                        {
+                            label: 'Durasi Respon',
+                            data: data.monthly.map(d => d.avg_respon_minutes),
+                            borderColor: 'rgba(59, 130, 246, 1)',
+                            backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                            borderWidth: 3,
+                            fill: true,
+                            tension: 0.4
+                        },
+                        {
+                            label: 'Penanganan Gangguan',
+                            data: data.monthly.map(d => d.avg_penanganan_minutes),
+                            borderColor: 'rgba(147, 51, 234, 1)',
+                            backgroundColor: 'rgba(147, 51, 234, 0.1)',
+                            borderWidth: 3,
+                            fill: true,
+                            tension: 0.4
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        tooltip: {
+                            callbacks: {
+                                label: ctx => ctx.dataset.label + ': ' + formatDuration(ctx.parsed.y)
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: { callback: v => formatDuration(v) }
+                        }
+                    }
+                }
+            });
+        }
+
+        function createQuarterlyChart(data) {
+            const ctx = document.getElementById('quarterlyChart').getContext('2d');
+            if (quarterlyChart) quarterlyChart.destroy();
+
+            quarterlyChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: data.quarterly.map(d => d.period),
+                    datasets: [
+                        {
+                            label: 'Durasi Respon',
+                            data: data.quarterly.map(d => d.avg_respon_minutes),
+                            backgroundColor: 'rgba(59, 130, 246, 0.8)',
+                            borderColor: 'rgba(59, 130, 246, 1)',
+                            borderWidth: 2,
+                            borderRadius: 6
+                        },
+                        {
+                            label: 'Penanganan Gangguan',
+                            data: data.quarterly.map(d => d.avg_penanganan_minutes),
+                            backgroundColor: 'rgba(147, 51, 234, 0.8)',
+                            borderColor: 'rgba(147, 51, 234, 1)',
+                            borderWidth: 2,
+                            borderRadius: 6
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        tooltip: {
+                            callbacks: {
+                                label: ctx => ctx.dataset.label + ': ' + formatDuration(ctx.parsed.y)
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: { callback: v => formatDuration(v) }
+                        }
+                    }
+                }
+            });
+        }
+
+        function createDistributionChart(data) {
+            const ctx = document.getElementById('distributionChart').getContext('2d');
+            if (distributionChart) distributionChart.destroy();
+
+            const responTotal = data.monthly.reduce((a, b) => a + b.avg_respon_minutes, 0);
+            const penangananTotal = data.monthly.reduce((a, b) => a + b.avg_penanganan_minutes, 0);
+
+            distributionChart = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Total Durasi Respon', 'Total Durasi Penanganan'],
+                    datasets: [{
+                        data: [responTotal, penangananTotal],
+                        backgroundColor: ['rgba(59, 130, 246, 0.8)', 'rgba(147, 51, 234, 0.8)'],
+                        borderColor: ['rgba(59, 130, 246, 1)', 'rgba(147, 51, 234, 1)'],
+                        borderWidth: 2
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { position: 'bottom' },
+                        tooltip: {
+                            callbacks: {
+                                label: ctx => ctx.label + ': ' + formatDuration(ctx.parsed)
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Location functions
+        function getCategoryColor(category) {
+            const colors = {
+                'Corporate': 'rgba(99, 102, 241, 0.8)',
+                'Retail': 'rgba(147, 51, 234, 0.8)',
+                'POP': 'rgba(34, 197, 94, 0.8)',
+                'Pemerintahan': 'rgba(249, 115, 22, 0.8)',
+                'Disdik': 'rgba(236, 72, 153, 0.8)',
+                'TEKKOMDIK': 'rgba(14, 165, 233, 0.8)',
+                'Lainnya': 'rgba(107, 114, 128, 0.8)'
+            };
+            return colors[category] || 'rgba(107, 114, 128, 0.8)';
+        }
+
+        function populateLocationFilters(locations) {
+            const filterSelect = document.getElementById('locationFilter');
+            const compare1Select = document.getElementById('compareLocation1');
+            const compare2Select = document.getElementById('compareLocation2');
+
+            filterSelect.innerHTML = '<option value="all">Semua Lokasi (Top 5)</option>';
+            compare1Select.innerHTML = '';
+            compare2Select.innerHTML = '';
+
+            const categories = {};
+            locations.forEach(loc => {
+                if (!categories[loc.category]) categories[loc.category] = [];
+                categories[loc.category].push(loc);
+            });
+
+            Object.keys(categories).sort().forEach(category => {
+                const optGroup = document.createElement('optgroup');
+                optGroup.label = category;
+
+                categories[category].forEach(loc => {
+                    optGroup.appendChild(new Option(loc.location, loc.location));
+                });
+
+                filterSelect.appendChild(optGroup.cloneNode(true));
+            });
+
+            locations.forEach(loc => {
+                compare1Select.add(new Option(`[${loc.category}] ${loc.location}`, loc.location));
+                compare2Select.add(new Option(`[${loc.category}] ${loc.location}`, loc.location));
+            });
+
+            if (locations.length >= 2) {
+                compare1Select.selectedIndex = 0;
+                compare2Select.selectedIndex = 1;
+            }
+        }
+
+        function createLocationAvgChart(locations) {
+            const ctx = document.getElementById('locationAvgChart').getContext('2d');
+            if (locationAvgChart) locationAvgChart.destroy();
+
+            const sorted = [...locations].sort((a, b) => b.avg_minutes - a.avg_minutes);
+
+            locationAvgChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: sorted.map(l => `[${l.category}] ${l.location}`),
+                    datasets: [{
+                        label: 'Avg Penanganan',
+                        data: sorted.map(l => l.avg_minutes),
+                        backgroundColor: sorted.map(l => getCategoryColor(l.category)),
+                        borderColor: sorted.map(l => getCategoryColor(l.category).replace('0.8', '1')),
+                        borderWidth: 2,
+                        borderRadius: 6
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    indexAxis: 'y',
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: ctx => 'Durasi: ' + formatDuration(ctx.parsed.x)
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            beginAtZero: true,
+                            ticks: { callback: v => formatDuration(v) }
+                        }
+                    }
+                }
+            });
+        }
+
+        function createLocationTrendChart(locations, selectedLocation) {
+            const ctx = document.getElementById('locationTrendChart').getContext('2d');
+            if (locationTrendChart) locationTrendChart.destroy();
+
+            let displayLocations = selectedLocation !== 'all'
+                ? locations.filter(l => l.location === selectedLocation)
+                : locations.slice(0, 5);
+
+            if (displayLocations.length === 0 || !displayLocations[0].monthly_data) return;
+
+            const datasets = displayLocations.map(loc => ({
+                label: `[${loc.category}] ${loc.location}`,
+                data: loc.monthly_data.map(m => m.value_minutes),
+                borderColor: getCategoryColor(loc.category).replace('0.8', '1'),
+                backgroundColor: getCategoryColor(loc.category).replace('0.8', '0.1'),
+                borderWidth: 2,
+                fill: false,
+                tension: 0.4
+            }));
+
+            locationTrendChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: displayLocations[0].monthly_data.map(m => m.bulan),
+                    datasets: datasets
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        tooltip: {
+                            callbacks: {
+                                label: ctx => ctx.dataset.label + ': ' + formatDuration(ctx.parsed.y)
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: { callback: v => formatDuration(v) }
+                        }
+                    }
+                }
+            });
+        }
+
+        function createLocationComparisonChart(locations, loc1, loc2) {
+            const ctx = document.getElementById('locationComparisonChart').getContext('2d');
+            if (locationComparisonChart) locationComparisonChart.destroy();
+
+            const location1 = locations.find(l => l.location === loc1);
+            const location2 = locations.find(l => l.location === loc2);
+
+            if (!location1 || !location2 || !location1.monthly_data) return;
+
+            locationComparisonChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: location1.monthly_data.map(m => m.bulan),
+                    datasets: [
+                        {
+                            label: `[${location1.category}] ${location1.location}`,
+                            data: location1.monthly_data.map(m => m.value_minutes),
+                            backgroundColor: getCategoryColor(location1.category),
+                            borderColor: getCategoryColor(location1.category).replace('0.8', '1'),
+                            borderWidth: 2,
+                            borderRadius: 4
+                        },
+                        {
+                            label: `[${location2.category}] ${location2.location}`,
+                            data: location2.monthly_data.map(m => m.value_minutes),
+                            backgroundColor: getCategoryColor(location2.category),
+                            borderColor: getCategoryColor(location2.category).replace('0.8', '1'),
+                            borderWidth: 2,
+                            borderRadius: 4
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        tooltip: {
+                            callbacks: {
+                                label: ctx => ctx.dataset.label + ': ' + formatDuration(ctx.parsed.y)
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: { callback: v => formatDuration(v) }
+                        }
+                    }
+                }
+            });
+        }
+
+        function updateLocationCharts() {
+            const selected = document.getElementById('locationFilter').value;
+            createLocationTrendChart(allLocationData, selected);
+        }
+
+        function updateComparisonChart() {
+            const loc1 = document.getElementById('compareLocation1').value;
+            const loc2 = document.getElementById('compareLocation2').value;
+            createLocationComparisonChart(allLocationData, loc1, loc2);
+        }
+
+        // ==================== MONTH DETAIL FUNCTIONS ====================
+        let monthLocationChart = null;
+        let yearlyQuarterChart = null;
+        let yearlyLocationRankChart = null;
+        let selectedMonth = 'REKAP';
+
+        function setActiveMonthButton(month) {
+            // Reset all buttons
+            const months = ['REKAP', 'JANUARI', 'FEBRUARI', 'MARET', 'APRIL', 'MEI', 'JUNI',
+                           'JULI', 'AGUSTUS', 'SEPTEMBER', 'OKTOBER', 'NOVEMBER', 'DESEMBER'];
+            months.forEach(m => {
+                const btn = document.getElementById(`btn-${m}`);
+                if (btn) {
+                    btn.className = 'px-4 py-2 rounded-lg font-medium transition-all duration-200 bg-slate-100 text-slate-700 hover:bg-slate-200';
+                }
+            });
+            // Set active button
+            const activeBtn = document.getElementById(`btn-${month}`);
+            if (activeBtn) {
+                activeBtn.className = 'px-4 py-2 rounded-lg font-medium transition-all duration-200 bg-purple-600 text-white';
+            }
+        }
+
+        async function loadMonthDetail(month) {
+            selectedMonth = month;
+            setActiveMonthButton(month);
+            showLoading();
+
+            const spreadsheetUrl = document.getElementById('spreadsheetUrl').value.trim();
+
+            if (month === 'REKAP') {
+                // Load yearly recap
+                document.getElementById('monthDetailSection').style.display = 'none';
+                document.getElementById('yearlyRecapSection').style.display = 'block';
+                await loadYearlyRecap(spreadsheetUrl);
+            } else {
+                // Load specific month
+                document.getElementById('yearlyRecapSection').style.display = 'none';
+                document.getElementById('monthDetailSection').style.display = 'block';
+                await loadSpecificMonth(month, spreadsheetUrl);
+            }
+
+            hideLoading();
+        }
+
+        async function loadSpecificMonth(month, spreadsheetUrl) {
+            try {
+                const response = await fetch('/api/month-detail', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ month, spreadsheet_url: spreadsheetUrl })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    const data = result.data;
+
+                    // Update title
+                    document.getElementById('monthDetailTitle').textContent = `Detail Bulan ${month}`;
+                    document.getElementById('monthDetailSubtitle').textContent = `Data lengkap untuk bulan ${month} 2025`;
+
+                    // Update summary cards
+                    document.getElementById('monthTotalTiket').textContent = data.summary.total_tiket.toLocaleString('id-ID');
+                    document.getElementById('monthAvgRespon').textContent = formatDuration(data.summary.avg_respon_minutes);
+                    document.getElementById('monthAvgPenanganan').textContent = formatDuration(data.summary.avg_penanganan_minutes);
+                    document.getElementById('monthTotalLokasi').textContent = data.summary.total_lokasi;
+
+                    // Create location chart
+                    createMonthLocationChart(data.location_breakdown);
+
+                    // Populate table
+                    populateMonthLocationTable(data.location_breakdown);
+                } else {
+                    alert('Error: ' + result.message);
+                }
+            } catch (error) {
+                console.error('Error loading month detail:', error);
+                alert('Error loading data: ' + error.message);
+            }
+        }
+
+        function createMonthLocationChart(locations) {
+            const ctx = document.getElementById('monthLocationChart').getContext('2d');
+            if (monthLocationChart) monthLocationChart.destroy();
+
+            const sorted = [...locations].sort((a, b) => b.avg_penanganan_minutes - a.avg_penanganan_minutes);
+
+            monthLocationChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: sorted.map(l => l.location),
+                    datasets: [{
+                        label: 'Avg Penanganan',
+                        data: sorted.map(l => l.avg_penanganan_minutes),
+                        backgroundColor: sorted.map(l => getCategoryColor(l.category)),
+                        borderColor: sorted.map(l => getCategoryColor(l.category).replace('0.8', '1')),
+                        borderWidth: 2,
+                        borderRadius: 6
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    indexAxis: 'y',
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: ctx => `Avg Penanganan: ${formatDuration(ctx.parsed.x)} (${ctx.raw} tiket)`
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            beginAtZero: true,
+                            ticks: { callback: v => formatDuration(v) }
+                        }
+                    }
+                }
+            });
+        }
+
+        function populateMonthLocationTable(locations) {
+            const tbody = document.getElementById('monthLocationTableBody');
+            tbody.innerHTML = locations.map(loc => `
+                <tr class="hover:bg-slate-50">
+                    <td class="px-4 py-3 text-sm font-medium text-slate-900">${loc.location}</td>
+                    <td class="px-4 py-3 text-sm">
+                        <span class="px-2 py-1 rounded-full text-xs font-medium" style="background-color: ${getCategoryColor(loc.category).replace('0.8', '0.2')}; color: ${getCategoryColor(loc.category).replace('0.8', '1').replace('rgba', 'rgb').replace(', 1)', ')')}">${loc.category}</span>
+                    </td>
+                    <td class="px-4 py-3 text-sm text-slate-700">${loc.total_tiket}</td>
+                    <td class="px-4 py-3 text-sm text-blue-600 font-medium">${formatDuration(loc.avg_respon_minutes)}</td>
+                    <td class="px-4 py-3 text-sm text-purple-600 font-medium">${formatDuration(loc.avg_penanganan_minutes)}</td>
+                </tr>
+            `).join('');
+        }
+
+        // ==================== YEARLY RECAP FUNCTIONS ====================
+        async function loadYearlyRecap(spreadsheetUrl) {
+            try {
+                const response = await fetch('/api/yearly-recap', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ spreadsheet_url: spreadsheetUrl })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    const data = result.data;
+
+                    // Create quarterly cards
+                    createQuarterlyCards(data.quarterly, data.yearly_summary);
+
+                    // Create quarterly chart
+                    createYearlyQuarterChart(data.quarterly);
+
+                    // Create location ranking chart
+                    createYearlyLocationRankChart(data.locations);
+
+                    // Create quarterly detail tables
+                    createQuarterlyDetailTables(data.quarterly);
+                } else {
+                    alert('Error: ' + result.message);
+                }
+            } catch (error) {
+                console.error('Error loading yearly recap:', error);
+                alert('Error loading data: ' + error.message);
+            }
+        }
+
+        function createQuarterlyCards(quarterly, yearly) {
+            const container = document.getElementById('quarterlyCards');
+            const colors = ['from-blue-500 to-blue-600', 'from-green-500 to-green-600', 'from-orange-500 to-orange-600', 'from-red-500 to-red-600'];
+
+            let html = quarterly.map((q, idx) => `
+                <div class="bg-gradient-to-br ${colors[idx]} rounded-xl p-5 text-white shadow-sm">
+                    <h3 class="text-sm font-medium opacity-90 mb-1">${q.quarter_name}</h3>
+                    <p class="text-xl font-bold">${formatDuration(q.avg_penanganan_minutes)}</p>
+                    <p class="text-xs opacity-80 mt-1">${q.total_tiket.toLocaleString('id-ID')} tiket</p>
+                    <p class="text-xs opacity-70">${q.months.join(', ')}</p>
+                </div>
+            `).join('');
+
+            container.innerHTML = html;
+        }
+
+        function createYearlyQuarterChart(quarterly) {
+            const ctx = document.getElementById('yearlyQuarterChart').getContext('2d');
+            if (yearlyQuarterChart) yearlyQuarterChart.destroy();
+
+            yearlyQuarterChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: quarterly.map(q => q.quarter_name),
+                    datasets: [
+                        {
+                            label: 'Avg Respon',
+                            data: quarterly.map(q => q.avg_respon_minutes),
+                            backgroundColor: 'rgba(59, 130, 246, 0.8)',
+                            borderColor: 'rgba(59, 130, 246, 1)',
+                            borderWidth: 2,
+                            borderRadius: 6
+                        },
+                        {
+                            label: 'Avg Penanganan',
+                            data: quarterly.map(q => q.avg_penanganan_minutes),
+                            backgroundColor: 'rgba(147, 51, 234, 0.8)',
+                            borderColor: 'rgba(147, 51, 234, 1)',
+                            borderWidth: 2,
+                            borderRadius: 6
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        tooltip: {
+                            callbacks: {
+                                label: ctx => ctx.dataset.label + ': ' + formatDuration(ctx.parsed.y)
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: { callback: v => formatDuration(v) }
+                        }
+                    }
+                }
+            });
+        }
+
+        function createYearlyLocationRankChart(locations) {
+            const ctx = document.getElementById('yearlyLocationRankChart').getContext('2d');
+            if (yearlyLocationRankChart) yearlyLocationRankChart.destroy();
+
+            const sorted = [...locations].sort((a, b) => b.avg_penanganan_minutes - a.avg_penanganan_minutes);
+
+            yearlyLocationRankChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: sorted.map(l => l.location),
+                    datasets: [{
+                        label: 'Avg Penanganan Tahunan',
+                        data: sorted.map(l => l.avg_penanganan_minutes),
+                        backgroundColor: sorted.map(l => getCategoryColor(l.category)),
+                        borderColor: sorted.map(l => getCategoryColor(l.category).replace('0.8', '1')),
+                        borderWidth: 2,
+                        borderRadius: 6
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    indexAxis: 'y',
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: ctx => `Avg: ${formatDuration(ctx.parsed.x)} (${sorted[ctx.dataIndex].total_records} records)`
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            beginAtZero: true,
+                            ticks: { callback: v => formatDuration(v) }
+                        }
+                    }
+                }
+            });
+        }
+
+        function createQuarterlyDetailTables(quarterly) {
+            const container = document.getElementById('quarterlyDetailTables');
+
+            let html = quarterly.map(q => `
+                <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+                    <h3 class="text-lg font-semibold text-slate-800 mb-4">${q.quarter_name} - Detail Bulanan</h3>
+                    <table class="min-w-full divide-y divide-slate-200">
+                        <thead class="bg-slate-50">
+                            <tr>
+                                <th class="px-4 py-2 text-left text-xs font-medium text-slate-500 uppercase">Bulan</th>
+                                <th class="px-4 py-2 text-left text-xs font-medium text-slate-500 uppercase">Tiket</th>
+                                <th class="px-4 py-2 text-left text-xs font-medium text-slate-500 uppercase">Avg Respon</th>
+                                <th class="px-4 py-2 text-left text-xs font-medium text-slate-500 uppercase">Avg Penanganan</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-200">
+                            ${q.monthly_data.map(m => `
+                                <tr class="hover:bg-slate-50">
+                                    <td class="px-4 py-2 text-sm font-medium text-slate-900">${m.bulan}</td>
+                                    <td class="px-4 py-2 text-sm text-slate-700">${m.total_tiket || '-'}</td>
+                                    <td class="px-4 py-2 text-sm text-blue-600">${formatDuration(m.avg_respon_minutes)}</td>
+                                    <td class="px-4 py-2 text-sm text-purple-600">${formatDuration(m.avg_penanganan_minutes)}</td>
+                                </tr>
+                            `).join('')}
+                            <tr class="bg-slate-100 font-semibold">
+                                <td class="px-4 py-2 text-sm text-slate-900">TOTAL ${q.quarter_name}</td>
+                                <td class="px-4 py-2 text-sm text-slate-700">${q.total_tiket}</td>
+                                <td class="px-4 py-2 text-sm text-blue-600">${formatDuration(q.avg_respon_minutes)}</td>
+                                <td class="px-4 py-2 text-sm text-purple-600">${formatDuration(q.avg_penanganan_minutes)}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            `).join('');
+
+            container.innerHTML = html;
+        }
+
+        // Location monthly data
+        async function loadLocationsList() {
+            try {
+                const spreadsheetUrl = document.getElementById('spreadsheetUrl').value.trim();
+                const response = await fetch('/api/locations-list', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ spreadsheet_url: spreadsheetUrl })
+                });
+                const result = await response.json();
+
+                if (result.success) {
+                    const selector = document.getElementById('locationSelector');
+                    selector.innerHTML = '<option value="">-- Pilih Lokasi --</option>';
+                    result.data.locations.forEach(loc => {
+                        selector.add(new Option(loc, loc));
+                    });
+                }
+            } catch (error) {
+                console.error('Error loading locations:', error);
+            }
+        }
+
+        async function loadLocationMonthlyData() {
+            const location = document.getElementById('locationSelector').value;
+            const spreadsheetUrl = document.getElementById('spreadsheetUrl').value.trim();
+
+            if (!location) {
+                document.getElementById('locationMonthlyContent').style.display = 'none';
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/location-monthly', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ location, spreadsheet_url: spreadsheetUrl })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    document.getElementById('selectedLocationName').textContent = location;
+                    document.getElementById('locationMonthlyContent').style.display = 'block';
+                    createLocationMonthlyChart(result.data.monthly);
+                    populateLocationMonthlyTable(result.data.monthly);
+                }
+            } catch (error) {
+                console.error('Error loading location data:', error);
+            }
+        }
+
+        function createLocationMonthlyChart(monthlyData) {
+            const ctx = document.getElementById('locationMonthlyChart').getContext('2d');
+            if (locationMonthlyChart) locationMonthlyChart.destroy();
+
+            locationMonthlyChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: monthlyData.map(m => m.bulan),
+                    datasets: [{
+                        label: 'Avg Penanganan',
+                        data: monthlyData.map(m => m.avg_minutes),
+                        backgroundColor: 'rgba(99, 102, 241, 0.8)',
+                        borderColor: 'rgba(99, 102, 241, 1)',
+                        borderWidth: 2,
+                        borderRadius: 6
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: ctx => 'Durasi: ' + formatDuration(ctx.parsed.y)
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: { callback: v => formatDuration(v) }
+                        },
+                        x: {
+                            ticks: { maxRotation: 45, minRotation: 45 }
+                        }
+                    }
+                }
+            });
+        }
+
+        function populateLocationMonthlyTable(monthlyData) {
+            const tbody = document.getElementById('locationMonthlyTableBody');
+            tbody.innerHTML = monthlyData.map(month => `
+                <tr class="hover:bg-slate-50">
+                    <td class="px-6 py-4 text-sm font-medium text-slate-900">${month.bulan}</td>
+                    <td class="px-6 py-4 text-sm text-slate-700">${formatDuration(month.avg_minutes)}</td>
+                    <td class="px-6 py-4 text-sm text-slate-700">${month.count} kejadian</td>
+                </tr>
+            `).join('');
+        }
+
+        // Main data loading function
+        async function loadData(silent = false) {
+            if (!silent) showLoading();
+            updateStatus('Memuat data...', false);
+
+            const spreadsheetUrl = document.getElementById('spreadsheetUrl').value.trim();
+
+            try {
+                const response = await fetch('/api/data', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ spreadsheet_url: spreadsheetUrl })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    currentData = result.data;
+
+                    // Update all visualizations
+                    updateSummaryCards(result.data);
+                    updateTable(result.data);
+                    createResponChart(result.data);
+                    createPenangananChart(result.data);
+                    createCombinedChart(result.data);
+                    createQuarterlyChart(result.data);
+                    createDistributionChart(result.data);
+
+                    await loadLocationsList();
+
+                    if (result.data.locations && result.data.locations.length > 0) {
+                        allLocationData = result.data.locations;
+                        document.getElementById('locationFilterSection').style.display = 'block';
+                        document.getElementById('locationChartsSection').style.display = 'block';
+
+                        populateLocationFilters(allLocationData);
+                        createLocationAvgChart(allLocationData);
+                        createLocationTrendChart(allLocationData, 'all');
+
+                        const loc1 = document.getElementById('compareLocation1').value;
+                        const loc2 = document.getElementById('compareLocation2').value;
+                        createLocationComparisonChart(allLocationData, loc1, loc2);
+                    } else {
+                        document.getElementById('locationFilterSection').style.display = 'none';
+                        document.getElementById('locationChartsSection').style.display = 'none';
+                    }
+
+                    updateLastUpdate();
+                    updateStatus(autoRefreshEnabled ? 'Live Monitoring' : 'Data dimuat', autoRefreshEnabled);
+                } else {
+                    updateStatus('Error: ' + result.message, false);
+                    if (!silent) alert('Error: ' + result.message);
+                }
+            } catch (error) {
+                updateStatus('Error koneksi', false);
+                if (!silent) alert('Error loading data: ' + error.message);
+            } finally {
+                if (!silent) hideLoading();
+            }
+        }
+
+        // Initialize
+        window.addEventListener('load', function() {
+            loadData();
+        });
+    </script>
+</body>
+</html>
