@@ -1,11 +1,14 @@
 from flask import Flask, render_template, jsonify, request
 import pandas as pd
 import numpy as np
-from datetime import timedelta
+from datetime import datetime, timedelta
 import re
 import os
 
 app = Flask(__name__)
+
+# Default spreadsheet URL - bisa diganti sesuai kebutuhan
+DEFAULT_SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1HiQX-jn2pNfMO2-ZkBwaMbcolyKFFNb0/edit"
 
 def parse_duration_to_minutes(duration_str):
     if pd.isna(duration_str):
@@ -377,7 +380,14 @@ def read_location_data_from_csv(csv_data):
 
 @app.route('/')
 def index():
-    return render_template('dashboard.html')
+    return render_template('dashboard.html', default_url=DEFAULT_SPREADSHEET_URL)
+
+@app.route('/api/config')
+def get_config():
+    return jsonify({
+        'default_spreadsheet_url': DEFAULT_SPREADSHEET_URL,
+        'last_update': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    })
 
 @app.route('/api/data', methods=['POST'])
 def get_data():
