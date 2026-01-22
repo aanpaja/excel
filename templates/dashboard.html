@@ -90,8 +90,11 @@
                             </svg>
                         </div>
                         <div>
-                            <h1 class="text-2xl sm:text-3xl font-bold text-slate-900">Live Dashboard Monitoring 2025</h1>
-                            <p class="text-slate-600 text-sm mt-0.5">Average Durasi Respon & Penanganan Gangguan - Real-time dari Google Sheets</p>
+                            <div class="flex items-center gap-2 flex-wrap">
+                                <h1 class="text-2xl sm:text-3xl font-bold text-slate-900">Live Dashboard Monitoring 2025</h1>
+                                <span class="px-2 py-1 bg-green-100 text-green-700 text-xs font-semibold rounded-full">Kalkulasi Otomatis</span>
+                            </div>
+                            <p class="text-slate-600 text-sm mt-0.5">Average dihitung langsung dari data mentah setiap sheet bulanan</p>
                         </div>
                     </div>
                 </div>
@@ -150,13 +153,13 @@
             </div>
             <div class="bg-gradient-to-br from-green-500 to-green-600 rounded-2xl p-5 text-white card-shadow">
                 <div class="flex items-center justify-between mb-2">
-                    <h3 class="text-sm font-medium opacity-90">Total Bulan</h3>
+                    <h3 class="text-sm font-medium opacity-90">Total Tiket Diproses</h3>
                     <svg class="w-6 h-6 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/>
                     </svg>
                 </div>
-                <p class="text-2xl font-bold" id="totalBulan">-</p>
-                <p class="text-xs opacity-80 mt-1" id="totalTriwulan">-</p>
+                <p class="text-2xl font-bold" id="totalTiket">-</p>
+                <p class="text-xs opacity-80 mt-1" id="totalBulanInfo">-</p>
             </div>
             <div class="bg-gradient-to-br from-orange-500 to-red-500 rounded-2xl p-5 text-white card-shadow">
                 <div class="flex items-center justify-between mb-2">
@@ -346,6 +349,7 @@
                             <th class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Avg Respon</th>
                             <th class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Avg Penanganan</th>
                             <th class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Selisih</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Total Tiket</th>
                         </tr>
                     </thead>
                     <tbody class="bg-white divide-y divide-slate-200" id="tableBody">
@@ -496,8 +500,9 @@
             document.getElementById('avgPenangananYearly').textContent = formatDuration(data.yearly.avg_penanganan_minutes);
             document.getElementById('avgPenangananYearlyMinutes').textContent = `${data.yearly.avg_penanganan_minutes.toFixed(2)} menit`;
 
-            document.getElementById('totalBulan').textContent = `${data.monthly.length} Bulan`;
-            document.getElementById('totalTriwulan').textContent = `${data.quarterly.length} Triwulan`;
+            const totalTiket = data.summary ? data.summary.total_tiket : data.monthly.reduce((sum, m) => sum + (m.total_tiket || 0), 0);
+            document.getElementById('totalTiket').textContent = totalTiket.toLocaleString('id-ID');
+            document.getElementById('totalBulanInfo').textContent = `${data.monthly.length} bulan diproses`;
 
             document.getElementById('totalLokasi').textContent = data.locations ? data.locations.length : 0;
         }
@@ -509,12 +514,14 @@
 
             data.monthly.forEach(item => {
                 const selisih = item.avg_penanganan_minutes - item.avg_respon_minutes;
+                const totalTiket = item.total_tiket || '-';
                 html += `
                     <tr class="hover:bg-slate-50 transition-colors">
                         <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-slate-900">${item.bulan}</td>
                         <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-700">${formatDuration(item.avg_respon_minutes)}</td>
                         <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-700">${formatDuration(item.avg_penanganan_minutes)}</td>
                         <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-700">${formatDuration(selisih)}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-500">${totalTiket}</td>
                     </tr>
                 `;
             });
@@ -932,7 +939,12 @@
         // Location monthly data
         async function loadLocationsList() {
             try {
-                const response = await fetch('/api/locations-list');
+                const spreadsheetUrl = document.getElementById('spreadsheetUrl').value.trim();
+                const response = await fetch('/api/locations-list', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ spreadsheet_url: spreadsheetUrl })
+                });
                 const result = await response.json();
 
                 if (result.success) {
@@ -949,6 +961,7 @@
 
         async function loadLocationMonthlyData() {
             const location = document.getElementById('locationSelector').value;
+            const spreadsheetUrl = document.getElementById('spreadsheetUrl').value.trim();
 
             if (!location) {
                 document.getElementById('locationMonthlyContent').style.display = 'none';
@@ -959,7 +972,7 @@
                 const response = await fetch('/api/location-monthly', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ location })
+                    body: JSON.stringify({ location, spreadsheet_url: spreadsheetUrl })
                 });
 
                 const result = await response.json();
