@@ -574,6 +574,139 @@ def read_google_sheets_location_data(spreadsheet_url):
         return []
 
 
+def read_google_sheets_monthly_with_locations(spreadsheet_url):
+    """
+    Read monthly sheets (JANUARI-DESEMBER) from Google Sheets and extract
+    Lokasi Pelanggan data with Durasi Respon and Durasi Penanganan.
+    This provides more detailed per-location data from each month.
+    """
+    try:
+        import urllib.parse
+        import urllib.request
+        import urllib.error
+        from io import StringIO
+
+        spreadsheet_url = spreadsheet_url.split('?')[0].split('#')[0]
+        sheet_id = spreadsheet_url.split('/d/')[1].split('/')[0]
+
+        print(f"\n{'='*60}")
+        print("READING MONTHLY SHEETS WITH LOKASI PELANGGAN FROM GOOGLE SHEETS...")
+        print(f"{'='*60}")
+
+        all_monthly_data = []
+        location_monthly_data = {}
+
+        for month in MONTH_NAMES:
+            try:
+                encoded_sheet = urllib.parse.quote(month)
+                csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&sheet={encoded_sheet}"
+
+                response = urllib.request.urlopen(csv_url, timeout=30)
+                csv_data = response.read().decode('utf-8')
+
+                # Parse CSV
+                df_month = pd.read_csv(StringIO(csv_data))
+                df_month.columns = df_month.columns.str.strip()
+
+                # Find required columns
+                lokasi_col = None
+                respon_col = None
+                penanganan_col = None
+
+                for col in df_month.columns:
+                    col_lower = col.lower().strip()
+                    if 'lokasi' in col_lower and 'pelanggan' in col_lower:
+                        lokasi_col = col
+                    elif 'durasi' in col_lower and 'respon' in col_lower:
+                        respon_col = col
+                    elif 'durasi' in col_lower and 'penanganan' in col_lower:
+                        penanganan_col = col
+
+                if not lokasi_col:
+                    print(f"  ⚠ Sheet {month}: 'Lokasi Pelanggan' column not found")
+                    continue
+
+                # Clean data - remove rows with empty location
+                df_month_clean = df_month[df_month[lokasi_col].notna()].copy()
+
+                # Parse duration columns
+                if respon_col and respon_col in df_month_clean.columns:
+                    df_month_clean['durasi_respon_minutes'] = df_month_clean[respon_col].apply(parse_duration_to_minutes)
+                else:
+                    df_month_clean['durasi_respon_minutes'] = 0
+
+                if penanganan_col and penanganan_col in df_month_clean.columns:
+                    df_month_clean['durasi_penanganan_minutes'] = df_month_clean[penanganan_col].apply(parse_duration_to_minutes)
+                else:
+                    df_month_clean['durasi_penanganan_minutes'] = 0
+
+                # Calculate monthly averages
+                avg_respon = df_month_clean['durasi_respon_minutes'].mean() if len(df_month_clean) > 0 else 0
+                avg_penanganan = df_month_clean['durasi_penanganan_minutes'].mean() if len(df_month_clean) > 0 else 0
+
+                all_monthly_data.append({
+                    'bulan': month,
+                    'avg_respon_minutes': avg_respon,
+                    'avg_penanganan_minutes': avg_penanganan
+                })
+
+                # Group by location (Lokasi Pelanggan)
+                location_grouped = df_month_clean.groupby(lokasi_col).agg({
+                    'durasi_respon_minutes': 'mean',
+                    'durasi_penanganan_minutes': 'mean'
+                }).reset_index()
+
+                for _, row in location_grouped.iterrows():
+                    loc_name = str(row[lokasi_col]).strip()
+
+                    if loc_name not in location_monthly_data:
+                        location_monthly_data[loc_name] = []
+
+                    location_monthly_data[loc_name].append({
+                        'bulan': month,
+                        'avg_respon_minutes': row['durasi_respon_minutes'],
+                        'avg_penanganan_minutes': row['durasi_penanganan_minutes']
+                    })
+
+                print(f"  ✓ {month}: {len(df_month_clean)} records, {len(location_grouped)} locations (Lokasi Pelanggan)")
+
+            except urllib.error.HTTPError as e:
+                if e.code == 403:
+                    print(f"  ⚠ ERROR 403: Spreadsheet might be PRIVATE!")
+                    break
+                elif e.code == 400:
+                    print(f"  ⚠ Sheet {month} not found")
+            except Exception as e:
+                print(f"  ⚠ Error reading sheet {month}: {e}")
+                continue
+
+        # Convert location_monthly_data to list format
+        locations_data = []
+        for loc_name, monthly_data in location_monthly_data.items():
+            category = get_location_category(loc_name)
+            avg_penanganan = sum([m['avg_penanganan_minutes'] for m in monthly_data]) / len(monthly_data) if monthly_data else 0
+            locations_data.append({
+                'location': loc_name,
+                'category': category,
+                'avg_minutes': avg_penanganan,
+                'monthly_data': monthly_data
+            })
+
+        # Sort by category and name
+        locations_data = sorted(locations_data, key=lambda x: (get_category_order(x['category']), x['location']))
+
+        print(f"\n✓ Total months processed: {len(all_monthly_data)}")
+        print(f"✓ Total unique Lokasi Pelanggan: {len(locations_data)}")
+
+        return all_monthly_data, locations_data
+
+    except Exception as e:
+        print(f"ERROR in read_google_sheets_monthly_with_locations: {e}")
+        import traceback
+        traceback.print_exc()
+        return [], []
+
+
 # ============================================
 # API ROUTES
 # ============================================
@@ -603,8 +736,25 @@ def get_data():
             print("MODE: GOOGLE SHEETS")
             print("="*80)
 
-            df = read_google_sheets_data(spreadsheet_url)
-            location_data = read_google_sheets_location_data(spreadsheet_url) if df is not None else []
+            # Read from monthly sheets to get Lokasi Pelanggan data
+            monthly_from_sheets, location_data = read_google_sheets_monthly_with_locations(spreadsheet_url)
+
+            # If monthly sheets reading successful, use that data
+            if monthly_from_sheets:
+                # Build df from monthly data for compatibility
+                data_list = []
+                for m in monthly_from_sheets:
+                    data_list.append({
+                        'BULAN': m['bulan'],
+                        'avg_respon_minutes': m['avg_respon_minutes'],
+                        'avg_penanganan_minutes': m['avg_penanganan_minutes']
+                    })
+                df = pd.DataFrame(data_list)
+            else:
+                # Fallback to AVG sheet if monthly sheets not available
+                print("Falling back to AVG sheet...")
+                df = read_google_sheets_data(spreadsheet_url)
+                location_data = read_google_sheets_location_data(spreadsheet_url) if df is not None else []
         else:
             print("\n" + "="*80)
             print("MODE: LOCAL EXCEL FILE")
@@ -673,12 +823,91 @@ def get_location_monthly():
     try:
         data = request.json
         location = data.get('location', '')
+        spreadsheet_url = data.get('spreadsheet_url', '') or SPREADSHEET_URL
 
         if not location:
             return jsonify({'success': False, 'message': 'Lokasi tidak boleh kosong'})
 
         monthly_data = []
 
+        # Check if using Google Sheets or local Excel
+        use_google_sheets = spreadsheet_url and 'docs.google.com/spreadsheets' in spreadsheet_url
+
+        if use_google_sheets:
+            # Read from Google Sheets
+            import urllib.parse
+            import urllib.request
+            from io import StringIO
+
+            spreadsheet_url = spreadsheet_url.split('?')[0].split('#')[0]
+            sheet_id = spreadsheet_url.split('/d/')[1].split('/')[0]
+
+            for month in MONTH_NAMES:
+                try:
+                    encoded_sheet = urllib.parse.quote(month)
+                    csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&sheet={encoded_sheet}"
+
+                    response = urllib.request.urlopen(csv_url, timeout=30)
+                    csv_data = response.read().decode('utf-8')
+                    df = pd.read_csv(StringIO(csv_data))
+                    df.columns = df.columns.str.strip()
+
+                    # Find columns
+                    lokasi_col = None
+                    penanganan_col = None
+                    respon_col = None
+
+                    for col in df.columns:
+                        col_lower = col.lower()
+                        if 'lokasi' in col_lower and 'pelanggan' in col_lower:
+                            lokasi_col = col
+                        elif 'durasi' in col_lower and 'penanganan' in col_lower:
+                            penanganan_col = col
+                        elif 'durasi' in col_lower and 'respon' in col_lower:
+                            respon_col = col
+
+                    if not lokasi_col or not penanganan_col:
+                        monthly_data.append({'bulan': month, 'avg_minutes': 0, 'avg_respon_minutes': 0, 'count': 0})
+                        continue
+
+                    # Filter by location (Lokasi Pelanggan)
+                    location_rows = df[df[lokasi_col] == location]
+
+                    if len(location_rows) == 0:
+                        monthly_data.append({'bulan': month, 'avg_minutes': 0, 'avg_respon_minutes': 0, 'count': 0})
+                        continue
+
+                    # Calculate averages
+                    durations = location_rows[penanganan_col].dropna()
+                    total_penanganan = sum([parse_duration_to_minutes(d) for d in durations])
+                    avg_penanganan = total_penanganan / len(durations) if len(durations) > 0 else 0
+
+                    avg_respon = 0
+                    if respon_col:
+                        respon_durations = location_rows[respon_col].dropna()
+                        total_respon = sum([parse_duration_to_minutes(d) for d in respon_durations])
+                        avg_respon = total_respon / len(respon_durations) if len(respon_durations) > 0 else 0
+
+                    monthly_data.append({
+                        'bulan': month,
+                        'avg_minutes': avg_penanganan,
+                        'avg_respon_minutes': avg_respon,
+                        'count': len(durations)
+                    })
+
+                except Exception as e:
+                    print(f"Error reading {month} for {location} from Google Sheets: {e}")
+                    monthly_data.append({'bulan': month, 'avg_minutes': 0, 'avg_respon_minutes': 0, 'count': 0})
+
+            return jsonify({
+                'success': True,
+                'data': {
+                    'location': location,
+                    'monthly': monthly_data
+                }
+            })
+
+        # Local Excel file reading
         for month in MONTH_NAMES:
             try:
                 df = pd.read_excel(EXCEL_FILE_PATH, sheet_name=month, header=0)
@@ -760,11 +989,56 @@ def get_location_monthly():
         return jsonify({'success': False, 'message': str(e)})
 
 
-@app.route('/api/locations-list', methods=['GET'])
+@app.route('/api/locations-list', methods=['GET', 'POST'])
 def get_locations_list():
-    """Get list of all unique locations from monthly sheets"""
+    """Get list of all unique Lokasi Pelanggan from monthly sheets"""
     try:
-        # Try to get locations from JANUARI sheet first
+        # Check if using Google Sheets
+        spreadsheet_url = None
+        if request.method == 'POST' and request.json:
+            spreadsheet_url = request.json.get('spreadsheet_url', '')
+        if not spreadsheet_url:
+            spreadsheet_url = SPREADSHEET_URL
+
+        use_google_sheets = spreadsheet_url and 'docs.google.com/spreadsheets' in spreadsheet_url
+
+        if use_google_sheets:
+            # Read from Google Sheets JANUARI sheet
+            import urllib.parse
+            import urllib.request
+            from io import StringIO
+
+            spreadsheet_url = spreadsheet_url.split('?')[0].split('#')[0]
+            sheet_id = spreadsheet_url.split('/d/')[1].split('/')[0]
+
+            encoded_sheet = urllib.parse.quote('JANUARI')
+            csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&sheet={encoded_sheet}"
+
+            try:
+                response = urllib.request.urlopen(csv_url, timeout=30)
+                csv_data = response.read().decode('utf-8')
+                df = pd.read_csv(StringIO(csv_data))
+                df.columns = df.columns.str.strip()
+
+                lokasi_col = None
+                for col in df.columns:
+                    if 'lokasi' in col.lower() and 'pelanggan' in col.lower():
+                        lokasi_col = col
+                        break
+
+                if lokasi_col:
+                    locations = df[lokasi_col].dropna().unique().tolist()
+                    valid_locations = [loc for loc in locations if loc and str(loc).strip() not in ['GMEDIA', 'nan', '', 'NaN']]
+                    return jsonify({
+                        'success': True,
+                        'data': {
+                            'locations': sorted(valid_locations)
+                        }
+                    })
+            except Exception as e:
+                print(f"Error getting locations from Google Sheets: {e}")
+
+        # Try to get locations from local Excel JANUARI sheet
         try:
             df = pd.read_excel(EXCEL_FILE_PATH, sheet_name='JANUARI', header=0)
             df.columns = df.columns.str.strip()
@@ -785,11 +1059,11 @@ def get_locations_list():
                     }
                 })
         except Exception as e:
-            print(f"Error getting locations from JANUARI: {e}")
+            print(f"Error getting locations from local Excel: {e}")
 
         return jsonify({
             'success': False,
-            'message': 'Tidak dapat membaca daftar lokasi'
+            'message': 'Tidak dapat membaca daftar Lokasi Pelanggan'
         })
 
     except Exception as e:
